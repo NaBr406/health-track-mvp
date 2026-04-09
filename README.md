@@ -207,6 +207,13 @@ cd server
 
 - `http://localhost:8080/swagger-ui.html`
 
+如果你只是想先快速做一轮**无 MySQL / 无 Redis** 的本机联调，也可以直接使用 H2 本地 profile：
+
+```bash
+cd server
+SPRING_PROFILES_ACTIVE=local ./mvnw spring-boot:run
+```
+
 ### 4. 启动前端
 
 ```bash
@@ -268,6 +275,7 @@ erDiagram
 - ✅ 已补充 `server/mvnw` 与 `.mvn/wrapper/maven-wrapper.properties`
 - ✅ 后端已成功执行：`./mvnw -v`
 - ✅ 后端已成功执行：`./mvnw -q -DskipTests package`
+- ✅ 已补充 H2 本地联调 profile：`application-local.yml`
 - ✅ 已补充根目录辅助脚本：`scripts/dev-setup.sh`、`scripts/dev-server.sh`、`scripts/dev-web.sh`
 - ⚠️ 当前机器 **没有 Docker**，所以我无法在这里实际执行 `docker compose up` 做容器联调
 
