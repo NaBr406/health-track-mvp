@@ -30,8 +30,16 @@
 ├── .gitignore
 ├── README.md
 ├── docker-compose.yml
+├── scripts
+│   ├── dev-server.sh
+│   ├── dev-setup.sh
+│   └── dev-web.sh
 ├── server
+│   ├── .mvn
+│   │   └── wrapper
+│   │       └── maven-wrapper.properties
 │   ├── Dockerfile
+│   ├── mvnw
 │   ├── pom.xml
 │   └── src
 │       └── main
@@ -180,13 +188,17 @@ docker compose up -d mysql redis
 
 ### 3. 启动后端
 
-当前后端使用 **Spring Boot 3 + Maven**。
-
-如果你的机器已安装 Maven：
+当前后端已经补上 **Maven Wrapper**，所以即使机器上没装 Maven，也可以直接启动：
 
 ```bash
 cd server
-mvn spring-boot:run
+./mvnw spring-boot:run
+```
+
+或者直接使用根目录脚本：
+
+```bash
+./scripts/dev-server.sh
 ```
 
 默认端口：`8080`
@@ -203,6 +215,12 @@ npm install
 npm run dev
 ```
 
+或者直接使用根目录脚本：
+
+```bash
+./scripts/dev-web.sh
+```
+
 默认端口：`3000`
 
 访问地址：
@@ -214,6 +232,12 @@ npm run dev
 ```bash
 cp .env.example .env
 docker compose up --build
+```
+
+如果你只是想先把依赖准备好，也可以先运行：
+
+```bash
+./scripts/dev-setup.sh
 ```
 
 启动后默认访问：
@@ -241,16 +265,19 @@ erDiagram
 - ✅ 前端页面路由已生成：`/`、`/login`、`/dashboard`、`/diet`、`/exercise`、`/care`、`/advice`
 - ✅ 根目录关键文件已生成：`README.md`、`.env.example`、`docker-compose.yml`
 - ✅ 后端关键骨架已生成：`pom.xml`、`application.yml`、Controller / Service / Repository / Entity / JWT 安全模块
-- ⚠️ 当前机器 **已安装 Java 17，但未安装 Maven**，且项目当前**没有 Maven Wrapper (`mvnw`)**，所以我在这台机器上**无法完成后端编译验证**
+- ✅ 已补充 `server/mvnw` 与 `.mvn/wrapper/maven-wrapper.properties`
+- ✅ 后端已成功执行：`./mvnw -v`
+- ✅ 后端已成功执行：`./mvnw -q -DskipTests package`
+- ✅ 已补充根目录辅助脚本：`scripts/dev-setup.sh`、`scripts/dev-server.sh`、`scripts/dev-web.sh`
 - ⚠️ 当前机器 **没有 Docker**，所以我无法在这里实际执行 `docker compose up` 做容器联调
 
 也就是说：
 
 - **前端可构建性：已验证通过**
-- **后端结构完整性：已人工检查通过**
-- **后端实际编译 / 容器联调：受当前机器环境限制，尚未在本机跑通**
+- **后端可编译性：已验证通过**
+- **容器联调：受当前机器环境限制，尚未在本机跑通**
 
-如果你后面在装有 Maven 或 Docker 的环境里跑，这个项目已经具备继续验证和修补的基础。
+如果你后面在装有 Docker 的环境里跑，这个项目已经具备继续验证和修补的基础。
 
 ## 后续迭代建议
 
