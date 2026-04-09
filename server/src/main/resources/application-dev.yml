@@ -1,0 +1,10 @@
+spring:
+  jpa:
+    show-sql: true
+logging:
+  level:
+    org.springframework.security: INFO
+    com.healthtrack.mvp.integration.dify: INFO
+app:
+  seed:
+    enabled: true

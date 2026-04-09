@@ -1,0 +1,72 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: health-track-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
+      MYSQL_DATABASE: ${MYSQL_DB:-health_track_mvp}
+      MYSQL_USER: ${MYSQL_USER:-health_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-health_password}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: health-track-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+
+  server:
+    build:
+      context: ./server
+    container_name: health-track-server
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DB: ${MYSQL_DB:-health_track_mvp}
+      MYSQL_USER: ${MYSQL_USER:-health_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-health_password}
+      JWT_SECRET: ${JWT_SECRET:-please-change-this-to-a-long-random-string-with-at-least-32-characters}
+      DIFY_BASE_URL: ${DIFY_BASE_URL:-}
+      DIFY_API_KEY: ${DIFY_API_KEY:-}
+      DIFY_WORKFLOW_ID: ${DIFY_WORKFLOW_ID:-}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "8080:8080"
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
+    container_name: health-track-web
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_started
+    ports:
+      - "3000:3000"
+
+volumes:
+  mysql-data:
+  redis-data:
+

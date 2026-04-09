@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: health-track-server
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DB:health_track_mvp}?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: ${MYSQL_USER:health_user}
+    password: ${MYSQL_PASSWORD:health_password}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
+server:
+  port: 8080
+app:
+  jwt:
+    secret: ${JWT_SECRET:please-change-this-to-a-long-random-string-with-at-least-32-characters}
+    expiration-ms: 86400000
+  dify:
+    base-url: ${DIFY_BASE_URL:}
+    api-key: ${DIFY_API_KEY:}
+    workflow-id: ${DIFY_WORKFLOW_ID:}
+  seed:
+    enabled: true
+
