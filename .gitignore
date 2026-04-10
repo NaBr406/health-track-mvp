@@ -10,4 +10,12 @@
 .npm-cache/
 .vscode/
 .DS_Store
+/.idea/
+/.codex-*.log
+/mobile/android/.gradle
+/mobile/android/.cxx
+/mobile/android/app/build
+/mobile/android/local.properties
+/server/.mvn/dist/
+/server/data/
 

@@ -4,8 +4,9 @@
   "private": true,
   "main": "expo/AppEntry",
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
+    "start": "expo start --port 8081",
+    "start:dev-client": "expo start --dev-client --port 8081",
+    "android": "expo run:android",
     "web": "expo start --web"
   },
   "dependencies": {

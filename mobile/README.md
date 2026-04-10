@@ -5,10 +5,22 @@ Expo-based Android client for the existing `server/` backend.
 ## Start
 
 ```bash
-cd mobile
-npm install
-npm run android
+pwsh ../scripts/dev-server.ps1
+pwsh ../scripts/dev-mobile.ps1
 ```
+
+Or start both in one go:
+
+```bash
+pwsh ../scripts/dev-all.ps1
+```
+
+`dev-mobile.ps1` will:
+
+- start the Android emulator if needed
+- install the debug app if it is not installed yet
+- start Metro in dev-client mode on port `8081`
+- relaunch the app on the emulator
 
 ## API base URL
 
