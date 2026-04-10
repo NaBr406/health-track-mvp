@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Health Track Mobile",
+    "slug": "health-track-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "com.healthtrack.mobile"
+    }
+  }
+}

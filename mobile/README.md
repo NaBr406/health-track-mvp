@@ -1,0 +1,28 @@
+# Health Track Mobile
+
+Expo-based Android client for the existing `server/` backend.
+
+## Start
+
+```bash
+cd mobile
+npm install
+npm run android
+```
+
+## API base URL
+
+Set `EXPO_PUBLIC_API_BASE_URL` before starting Expo.
+
+- Android emulator: `http://10.0.2.2:8080`
+- Physical Android device: `http://<your-lan-ip>:8080`
+
+Copy `.env.example` to `.env` and adjust the value if needed.
+
+## Current MVP scope
+
+- Login and register
+- Dashboard summary and profile update
+- Diet / exercise / care record query and creation
+- Daily AI advice display
+- Mock fallback when the backend is unavailable

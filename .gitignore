@@ -1,8 +1,12 @@
 /.env
 /server/target
-/web/.next
-/web/node_modules
-/web/package-lock.json
+/web/
+/mobile/.expo
+/mobile/dist
+/mobile/node_modules
+/mobile/package-lock.json
+/mobile/.env
+.expo/
 .npm-cache/
 .vscode/
 .DS_Store
