@@ -1,12 +1,12 @@
-﻿import { Ionicons } from "@expo/vector-icons";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { OutlineButton, Panel } from "../../components/clinical";
 import { api } from "../../lib/api";
-import { useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
 import { formatDateTime, formatWeekday, getShiftedDateString, getTodayString, parseLeadingNumber } from "../../lib/utils";
+import { useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
 import { borders, colors, layout, radii, shadows, spacing, typography } from "../../theme/tokens";
 import type { AuthSession, DashboardMetric, DashboardSnapshot, HealthProfile } from "../../types";
 
@@ -18,47 +18,28 @@ type DashboardScreenProps = {
   onRequestSignIn: () => void;
 };
 
-type AdviceTone = {
-  iconName: keyof typeof Ionicons.glyphMap;
-  iconColor: string;
-  iconBackground: string;
-  panelBackground: string;
-  cardBackground: string;
-  chipBackground: string;
-  chipTextColor: string;
-  statusLabel: string;
-};
-
 type MetricCardMeta = {
   id: string;
   label: string;
   descriptor: string;
   iconName: keyof typeof Ionicons.glyphMap;
-  accentColor: string;
-  softBackground: string;
   valueText: string;
   unitText?: string;
   statusText: string;
-  targetText: string;
+  helperText: string;
   progress?: number;
-  values?: number[];
-};
-
-type TrendBarDatum = {
-  date: string;
-  progress: number;
-};
-
-type WeeklyBars = {
-  calorieValues: TrendBarDatum[];
-  exerciseValues: TrendBarDatum[];
+  bars?: Array<{
+    label: string;
+    ratio: number;
+    value: number;
+  }>;
 };
 
 const DEFAULT_CALORIE_TARGET = 1700;
 const DEFAULT_EXERCISE_TARGET = 40;
-const DEFAULT_STEP_TARGET = 8000;
-const DEFAULT_SLEEP_TARGET = 7.5;
 const DEFAULT_GLUCOSE_TARGET = 7.2;
+const FALLBACK_GLUCOSE_SERIES = [6.4, 7.2, 8.1, 6.9, 7.7, 6.6, 7.3];
+const FALLBACK_BAR_RATIOS = [0.36, 0.58, 0.88, 0.47, 0.77, 0.41, 0.68];
 
 export function DashboardScreen({
   session,
@@ -87,8 +68,7 @@ export function DashboardScreen({
     }
   }
 
-  const adviceTone = useMemo(() => resolveAdviceTone(snapshot), [snapshot]);
-  const adviceSummary = useMemo(() => buildCompactAdvice(snapshot), [snapshot]);
+  const adviceCard = useMemo(() => buildAdviceCard(snapshot), [snapshot]);
   const metricCards = useMemo(() => buildMetricCards(snapshot, healthProfile), [snapshot, healthProfile]);
 
   return (
@@ -106,67 +86,54 @@ export function DashboardScreen({
           accessibilityRole="button"
           disabled={!snapshot}
           onPress={() => snapshot && onOpenAdjustmentDetail(snapshot)}
-          style={({ pressed }) => [
-            styles.heroPanel,
-            { backgroundColor: adviceTone.panelBackground },
-            pressed && snapshot ? styles.heroPanelPressed : null
-          ]}
+          style={({ pressed }) => [styles.heroCard, pressed && snapshot ? styles.heroCardPressed : null]}
         >
-          <View style={styles.heroTopRow}>
-            <View style={styles.heroLabelRow}>
-              <View style={[styles.sectionIconWrap, { backgroundColor: adviceTone.iconBackground }]}>
-                <Ionicons color={adviceTone.iconColor} name={adviceTone.iconName} size={18} />
-              </View>
-              <Text style={styles.heroEyebrow}>今日 AI 建议</Text>
+          <View style={styles.heroHeader}>
+            <View style={styles.heroBadge}>
+              <Ionicons color={colors.primary} name="sparkles-outline" size={14} />
+              <Text style={styles.heroBadgeText}>今日 AI 建议</Text>
             </View>
-            <StatusChip tone={adviceTone} />
+            <Text style={styles.heroTimestamp}>{adviceCard.timestamp}</Text>
           </View>
 
-          <Text style={styles.heroTitle}>{adviceSummary.lead}</Text>
-          <Text numberOfLines={2} style={styles.heroReason}>
-            {adviceSummary.reason}
+          <Text style={styles.heroTitle}>{adviceCard.title}</Text>
+          <Text numberOfLines={2} style={styles.heroSummary}>
+            {adviceCard.summary}
           </Text>
 
           <View style={styles.heroFooter}>
-            <View style={styles.parameterChip}>
-              <Ionicons color={adviceTone.iconColor} name="options-outline" size={14} />
-              <Text style={styles.parameterChipText}>
-                {snapshot ? `${snapshot.adjustment.parameterLabel} ${snapshot.adjustment.parameterDelta}` : "等待同步"}
-              </Text>
+            <View style={styles.parameterPill}>
+              <Ionicons color={colors.primary} name="options-outline" size={14} />
+              <Text style={styles.parameterPillText}>{adviceCard.parameter}</Text>
             </View>
-            <View style={styles.heroLinkRow}>
-              <Text style={styles.heroLinkText}>查看详情</Text>
-              <Ionicons color={colors.textMuted} name="chevron-forward" size={16} />
+            <View style={styles.detailLink}>
+              <Text style={styles.detailLinkText}>查看完整方案</Text>
+              <Ionicons color={colors.primary} name="chevron-forward" size={16} />
             </View>
           </View>
         </Pressable>
 
-        <View style={styles.metricsSection}>
-          <View style={styles.metricsHeaderRow}>
-            <View style={[styles.metricIconWrap, styles.metricsHeaderIcon]}>
-              <Ionicons color={colors.primary} name="pulse-outline" size={18} />
-            </View>
-            <View style={styles.metricsHeaderCopy}>
-              <Text style={styles.metricsHeaderEyebrow}>今日监测</Text>
-              <Text style={styles.metricsHeaderTitle}>3 个核心指标</Text>
-            </View>
-          </View>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionEyebrow}>今日概览</Text>
+          <Text style={styles.sectionTitle}>关键指标</Text>
+        </View>
 
-          <View style={styles.metricGrid}>
-            {metricCards.map((metric) => (metric.values ? <TrendMetricCard key={metric.id} metric={metric} /> : <RingMetricCard key={metric.id} metric={metric} />))}
-          </View>
+        <View style={styles.metricGrid}>
+          {metricCards.map((metric) =>
+            metric.bars ? <TrendMetricCard key={metric.id} metric={metric} /> : <RingMetricCard key={metric.id} metric={metric} />
+          )}
         </View>
 
         {!session ? (
           <Panel>
-            <DashboardSectionHeader
-              description="建档、建议查看和健康记录都可继续使用，需要跨设备同步时再登录即可。"
-              eyebrow="访客模式"
-              iconBackground={colors.primarySoft}
-              iconColor={colors.primary}
-              iconName="cloud-offline-outline"
-              title="当前以本地演示模式运行"
-            />
+            <View style={styles.syncHeader}>
+              <View style={styles.syncBadge}>
+                <Ionicons color={colors.primary} name="cloud-offline-outline" size={16} />
+                <Text style={styles.syncBadgeText}>本地离线模式</Text>
+              </View>
+              <Text style={styles.syncTitle}>当前可以继续浏览和记录</Text>
+              <Text style={styles.syncDescription}>登录后可将资料、建议与对话同步到云端。</Text>
+            </View>
             <OutlineButton label="登录同步" onPress={onRequestSignIn} variant="ghost" />
           </Panel>
         ) : null}
@@ -175,109 +142,13 @@ export function DashboardScreen({
   );
 }
 
-function DashboardSectionHeader({
-  eyebrow,
-  title,
-  description,
-  iconName,
-  iconColor,
-  iconBackground,
-  trailing
-}: {
-  eyebrow: string;
-  title: string;
-  description?: string;
-  iconName: keyof typeof Ionicons.glyphMap;
-  iconColor: string;
-  iconBackground: string;
-  trailing?: ReactNode;
-}) {
-  return (
-    <View style={styles.sectionHeader}>
-      <View style={styles.sectionHeaderMain}>
-        <View style={[styles.sectionIconWrap, { backgroundColor: iconBackground }]}>
-          <Ionicons color={iconColor} name={iconName} size={18} />
-        </View>
-        <View style={styles.sectionCopy}>
-          <Text style={styles.sectionEyebrow}>{eyebrow}</Text>
-          <Text style={styles.sectionTitle}>{title}</Text>
-          {description ? <Text style={styles.sectionDescription}>{description}</Text> : null}
-        </View>
-      </View>
-      {trailing ? <View style={styles.sectionTrailing}>{trailing}</View> : null}
-    </View>
-  );
-}
-
-function StatusChip({ tone }: { tone: AdviceTone }) {
-  return (
-    <View style={[styles.statusChip, { backgroundColor: tone.chipBackground }]}>
-      <Text style={[styles.statusChipText, { color: tone.chipTextColor }]}>{tone.statusLabel}</Text>
-    </View>
-  );
-}
-
-function SummaryMetaChip({
-  iconName,
-  label,
-  value
-}: {
-  iconName: keyof typeof Ionicons.glyphMap;
-  label: string;
-  value: string;
-}) {
-  return (
-    <View style={styles.metaChip}>
-      <View style={styles.metaChipLabelRow}>
-        <Ionicons color={colors.textSoft} name={iconName} size={14} />
-        <Text style={styles.metaChipLabel}>{label}</Text>
-      </View>
-      <Text style={styles.metaChipValue}>{value}</Text>
-    </View>
-  );
-}
-
-function FeedbackButton({
-  label,
-  iconName,
-  backgroundColor,
-  active,
-  disabled,
-  onPress
-}: {
-  label: string;
-  iconName: keyof typeof Ionicons.glyphMap;
-  backgroundColor: string;
-  active: boolean;
-  disabled: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.feedbackButton,
-        { backgroundColor },
-        active ? styles.feedbackButtonActive : null,
-        disabled ? styles.feedbackButtonDisabled : null,
-        pressed && !disabled ? styles.feedbackButtonPressed : null
-      ]}
-    >
-      <Ionicons color={colors.inverseText} name={iconName} size={18} />
-      <Text style={styles.feedbackButtonText}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function RingMetricCard({ metric }: { metric: MetricCardMeta }) {
   return (
-    <View style={[styles.metricCard, { backgroundColor: metric.softBackground }]}>
+    <View style={styles.metricCard}>
       <MetricCardHeader metric={metric} />
-      <View style={styles.metricVisualRow}>
-        <CircularProgressRing accentColor={metric.accentColor} progress={metric.progress ?? 0} />
+      <View style={styles.metricRow}>
         <MetricValueBlock metric={metric} />
+        <CircularProgressRing progress={metric.progress ?? 0} />
       </View>
     </View>
   );
@@ -285,11 +156,11 @@ function RingMetricCard({ metric }: { metric: MetricCardMeta }) {
 
 function TrendMetricCard({ metric }: { metric: MetricCardMeta }) {
   return (
-    <View style={[styles.metricCardWide, { backgroundColor: metric.softBackground }]}>
+    <View style={styles.metricCardWide}>
       <MetricCardHeader metric={metric} />
-      <View style={styles.trendMetricBody}>
+      <View style={styles.trendBody}>
         <MetricValueBlock metric={metric} />
-        <MiniBarChart accentColor={metric.accentColor} values={metric.values ?? []} />
+        <MiniBarChart bars={metric.bars ?? []} />
       </View>
     </View>
   );
@@ -297,11 +168,11 @@ function TrendMetricCard({ metric }: { metric: MetricCardMeta }) {
 
 function MetricCardHeader({ metric }: { metric: MetricCardMeta }) {
   return (
-    <View style={styles.metricCardHeader}>
-      <View style={[styles.metricIconWrap, { backgroundColor: colors.surface }]}>
-        <Ionicons color={metric.accentColor} name={metric.iconName} size={18} />
+    <View style={styles.metricHeader}>
+      <View style={styles.metricIconWrap}>
+        <Ionicons color={colors.primary} name={metric.iconName} size={17} />
       </View>
-      <View style={styles.metricCopy}>
+      <View style={styles.metricHeaderCopy}>
         <Text style={styles.metricLabel}>{metric.label}</Text>
         <Text style={styles.metricDescriptor}>{metric.descriptor}</Text>
       </View>
@@ -311,20 +182,20 @@ function MetricCardHeader({ metric }: { metric: MetricCardMeta }) {
 
 function MetricValueBlock({ metric }: { metric: MetricCardMeta }) {
   return (
-    <View style={styles.metricValueStack}>
+    <View style={styles.metricValueBlock}>
       <Text style={styles.metricValueText}>
         {metric.valueText}
         {metric.unitText ? <Text style={styles.metricUnitText}> {metric.unitText}</Text> : null}
       </Text>
       <Text style={styles.metricStatusText}>{metric.statusText}</Text>
-      {metric.targetText ? <Text style={styles.metricTargetText}>{metric.targetText}</Text> : null}
+      <Text style={styles.metricHelperText}>{metric.helperText}</Text>
     </View>
   );
 }
 
-function CircularProgressRing({ progress, accentColor }: { progress: number; accentColor: string }) {
-  const size = 78;
-  const stroke = 8;
+function CircularProgressRing({ progress }: { progress: number }) {
+  const size = 64;
+  const stroke = 5;
   const clamped = clamp(progress);
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -332,7 +203,7 @@ function CircularProgressRing({ progress, accentColor }: { progress: number; acc
   return (
     <View style={styles.ringWrap}>
       <Svg height={size} width={size}>
-        <Circle cx={size / 2} cy={size / 2} fill="none" r={radius} stroke="rgba(16, 35, 59, 0.09)" strokeWidth={stroke} />
+        <Circle cx={size / 2} cy={size / 2} fill="none" r={radius} stroke="rgba(0, 82, 204, 0.10)" strokeWidth={stroke} />
         <Circle
           cx={size / 2}
           cy={size / 2}
@@ -341,7 +212,7 @@ function CircularProgressRing({ progress, accentColor }: { progress: number; acc
           originY={size / 2}
           r={radius}
           rotation={-90}
-          stroke={accentColor}
+          stroke={colors.primary}
           strokeDasharray={`${circumference} ${circumference}`}
           strokeDashoffset={circumference * (1 - clamped)}
           strokeLinecap="round"
@@ -355,166 +226,58 @@ function CircularProgressRing({ progress, accentColor }: { progress: number; acc
   );
 }
 
-function MiniBarChart({ values, accentColor }: { values: number[]; accentColor: string }) {
-  const fallbackValues = values.length > 0 ? values : [0, 0, 0, 0, 0, 0, 0];
-  const maxValue = Math.max(...fallbackValues, 1);
-
+function MiniBarChart({ bars }: { bars: Array<{ label: string; ratio: number; value: number }> }) {
   return (
-    <View style={styles.miniBarChart}>
-      {fallbackValues.map((value, index) => (
-        <View key={`${index}-${value}`} style={styles.miniBarItem}>
-          <View style={styles.miniBarTrack}>
+    <View style={styles.barChart}>
+      {bars.map((bar, index) => (
+        <View key={`${bar.label}-${index}`} style={styles.barColumn}>
+          <View style={styles.barTrack}>
             <View
               style={[
-                styles.miniBarFill,
+                styles.barFill,
                 {
-                  backgroundColor: accentColor,
-                  height: `${Math.max((value / maxValue) * 100, value > 0 ? 12 : 6)}%`,
-                  opacity: index === fallbackValues.length - 1 ? 1 : 0.56 + (index / fallbackValues.length) * 0.24
+                  height: `${Math.max(bar.ratio * 100, 18)}%`,
+                  opacity: 0.36 + index * 0.08
                 }
               ]}
             />
           </View>
+          <Text style={styles.barLabel}>{bar.label}</Text>
         </View>
       ))}
     </View>
   );
 }
 
-function WeeklyTrendCard({ bars }: { bars: WeeklyBars }) {
-  return (
-    <View style={styles.weeklyTrendCard}>
-      <View style={styles.weeklyTrendTitleRow}>
-        <View style={[styles.metricIconWrap, styles.weeklyIconWrap]}>
-          <Ionicons color={colors.primary} name="analytics-outline" size={18} />
-        </View>
-        <View style={styles.weeklyTrendCopy}>
-          <Text style={styles.weeklyTrendTitle}>近 7 日执行趋势</Text>
-          <Text style={styles.weeklyTrendDescription}>用微型柱状图快速浏览热量与运动完成度。</Text>
-        </View>
-      </View>
-      <MiniTrendRow accentColor={colors.warning} label="热量达成" values={bars.calorieValues} />
-      <MiniTrendRow accentColor={colors.primary} label="运动完成" values={bars.exerciseValues} />
-    </View>
-  );
-}
-
-function MiniTrendRow({
-  label,
-  values,
-  accentColor
-}: {
-  label: string;
-  values: TrendBarDatum[];
-  accentColor: string;
-}) {
-  return (
-    <View style={styles.trendRow}>
-      <Text style={styles.trendRowLabel}>{label}</Text>
-      <View style={styles.trendBars}>
-        {values.map((item) => (
-          <View key={item.date} style={styles.trendBarItem}>
-            <View style={styles.trendBarTrack}>
-              <View style={[styles.trendBarFill, { backgroundColor: accentColor, height: `${Math.max(item.progress * 100, 10)}%` }]} />
-            </View>
-            <Text style={styles.trendBarLabel}>{formatWeekday(item.date).replace("星期", "").replace("周", "")}</Text>
-          </View>
-        ))}
-      </View>
-    </View>
-  );
-}
-
-function ObservationCard({ text }: { text: string }) {
-  return (
-    <View style={styles.observationCard}>
-      <View style={styles.observationHeader}>
-        <View style={[styles.metricIconWrap, styles.observationIconWrap]}>
-          <Ionicons color={colors.primary} name="shield-checkmark-outline" size={18} />
-        </View>
-        <View style={styles.observationCopy}>
-          <Text style={styles.observationLabel}>系统观察</Text>
-          <Text style={styles.observationText}>{text}</Text>
-        </View>
-      </View>
-    </View>
-  );
-}
-
-function buildCompactAdvice(snapshot: DashboardSnapshot | null) {
+function buildAdviceCard(snapshot: DashboardSnapshot | null) {
   if (!snapshot) {
     return {
-      lead: "系统正在整理今日执行建议",
-      reason: "同步最近一次对话和监测摘要后，这里会显示压缩后的今日建议。"
+      title: "系统正在生成今日方案",
+      summary: "同步最近的对话与监测摘要后，这里会显示压缩后的今日建议。",
+      parameter: "等待同步",
+      timestamp: "同步中"
     };
   }
 
-  const label = snapshot.adjustment.parameterLabel.toUpperCase();
-  const delta = snapshot.adjustment.parameterDelta;
-  let lead = snapshot.adjustment.title;
+  const parameterLabel = `${snapshot.adjustment.parameterLabel} ${snapshot.adjustment.parameterDelta}`;
+  const normalizedLabel = snapshot.adjustment.parameterLabel.toUpperCase();
+  let title = snapshot.adjustment.title;
 
-  if (label.includes("CHO")) {
-    lead = `今日碳水建议 ${delta}`;
-  } else if (label.includes("ACT")) {
-    lead = `今日活动时长建议 ${delta}`;
-  } else if (label.includes("SLEEP")) {
-    lead = `今晚恢复窗口建议 ${delta}`;
-  } else if (label.includes("GLU")) {
-    lead = `今日血糖控制建议 ${delta}`;
+  if (normalizedLabel.includes("CHO")) {
+    title = `今日碳水建议 ${snapshot.adjustment.parameterDelta}`;
+  } else if (normalizedLabel.includes("ACT")) {
+    title = `今日活动时长建议 ${snapshot.adjustment.parameterDelta}`;
+  } else if (normalizedLabel.includes("SLEEP")) {
+    title = `今晚恢复窗口建议 ${snapshot.adjustment.parameterDelta}`;
+  } else if (normalizedLabel.includes("GLU")) {
+    title = `今日血糖控制建议 ${snapshot.adjustment.parameterDelta}`;
   }
 
   return {
-    lead,
-    reason: snapshot.adjustment.summary
-  };
-}
-
-function resolveAdviceTone(snapshot: DashboardSnapshot | null): AdviceTone {
-  if (!snapshot) {
-    return {
-      iconName: "sparkles-outline",
-      iconColor: colors.primary,
-      iconBackground: colors.primarySoft,
-      panelBackground: colors.backgroundAccent,
-      cardBackground: "#F5F9FF",
-      chipBackground: colors.primarySoft,
-      chipTextColor: colors.primary,
-      statusLabel: "等待同步"
-    };
-  }
-
-  const latestGlucose = getMetricNumber(snapshot, "glucose");
-  const latestExercise = getMetricNumber(snapshot, "exercise");
-  const latestSteps = getMetricNumber(snapshot, "steps");
-  const latestSleep = getMetricNumber(snapshot, "sleep");
-  const hasWarningSignal =
-    latestGlucose > DEFAULT_GLUCOSE_TARGET ||
-    latestExercise < DEFAULT_EXERCISE_TARGET * 0.6 ||
-    latestSteps < DEFAULT_STEP_TARGET * 0.7 ||
-    latestSleep < 6.5;
-
-  if (hasWarningSignal) {
-    return {
-      iconName: "alert-circle-outline",
-      iconColor: colors.warning,
-      iconBackground: "#FCE9D1",
-      panelBackground: "#FFF8F0",
-      cardBackground: "#FFFDF9",
-      chipBackground: "#FCE9D1",
-      chipTextColor: colors.warning,
-      statusLabel: snapshot.adjustment.feedback === "reject" ? "已记录偏差" : "建议微调"
-    };
-  }
-
-  return {
-    iconName: "checkmark-circle-outline",
-    iconColor: colors.success,
-    iconBackground: "#DDF0E2",
-    panelBackground: "#F4FBF5",
-    cardBackground: "#FCFEFC",
-    chipBackground: "#DDF0E2",
-    chipTextColor: colors.success,
-    statusLabel: snapshot.adjustment.feedback === "accept" ? "已采纳" : "稳态执行"
+    title,
+    summary: snapshot.adjustment.summary,
+    parameter: parameterLabel,
+    timestamp: formatDateTime(snapshot.adjustment.generatedAt)
   };
 }
 
@@ -523,7 +286,7 @@ function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: Hea
   const calorieValue = getMetricNumber(snapshot, "calories");
   const exerciseValue = getMetricNumber(snapshot, "exercise");
   const glucoseValue = getMetricNumber(snapshot, "glucose");
-  const glucoseSeries = snapshot?.history?.length ? snapshot.history.map((item) => item.glucoseMmol) : [6.8, 7.1, 7.3, 7.0, 7.4, 7.2, 7.1];
+  const glucoseBars = buildGlucoseBars(snapshot);
 
   return [
     {
@@ -531,12 +294,10 @@ function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: Hea
       label: "热量",
       descriptor: "今日摄入",
       iconName: "flame-outline",
-      accentColor: colors.warning,
-      softBackground: colors.warningSoft,
-      valueText: formatPrimaryMetric(calorieValue),
+      valueText: formatMetricInteger(calorieValue),
       unitText: "kcal",
-      statusText: calorieValue >= calorieTarget ? "已接近目标" : `还差 ${Math.max(Math.round(calorieTarget - calorieValue), 0)} kcal`,
-      targetText: "",
+      statusText: calorieValue >= calorieTarget ? "接近目标区间" : `距离目标 ${Math.max(Math.round(calorieTarget - calorieValue), 0)} kcal`,
+      helperText: `目标 ${Math.round(calorieTarget)} kcal`,
       progress: clamp(calorieValue / calorieTarget)
     },
     {
@@ -544,12 +305,10 @@ function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: Hea
       label: "运动时长",
       descriptor: "主动训练",
       iconName: "fitness-outline",
-      accentColor: colors.primary,
-      softBackground: colors.primarySoft,
-      valueText: formatPrimaryMetric(exerciseValue),
+      valueText: formatMetricInteger(exerciseValue),
       unitText: "min",
-      statusText: exerciseValue >= DEFAULT_EXERCISE_TARGET ? "运动达标" : `还差 ${Math.max(Math.round(DEFAULT_EXERCISE_TARGET - exerciseValue), 0)} 分钟`,
-      targetText: "",
+      statusText: exerciseValue >= DEFAULT_EXERCISE_TARGET ? "已达到今日建议" : `还需 ${Math.max(Math.round(DEFAULT_EXERCISE_TARGET - exerciseValue), 0)} 分钟`,
+      helperText: `目标 ${DEFAULT_EXERCISE_TARGET} 分钟`,
       progress: clamp(exerciseValue / DEFAULT_EXERCISE_TARGET)
     },
     {
@@ -557,41 +316,48 @@ function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: Hea
       label: "血糖趋势",
       descriptor: "近 7 日波动",
       iconName: "pulse-outline",
-      accentColor: glucoseValue <= DEFAULT_GLUCOSE_TARGET ? colors.success : colors.warning,
-      softBackground: glucoseValue <= DEFAULT_GLUCOSE_TARGET ? colors.successSoft : colors.warningSoft,
-      valueText: glucoseValue.toFixed(1),
+      valueText: glucoseValue > 0 ? glucoseValue.toFixed(1) : "--",
       unitText: "mmol/L",
-      statusText: glucoseValue <= DEFAULT_GLUCOSE_TARGET ? "处于目标范围" : `高于目标 ${(glucoseValue - DEFAULT_GLUCOSE_TARGET).toFixed(1)}`,
-      targetText: "",
-      values: glucoseSeries
+      statusText: glucoseValue > 0 ? (glucoseValue <= DEFAULT_GLUCOSE_TARGET ? "维持在建议区间" : `略高于建议值 ${(glucoseValue - DEFAULT_GLUCOSE_TARGET).toFixed(1)}`) : "等待同步监测数据",
+      helperText: `建议上限 ${DEFAULT_GLUCOSE_TARGET.toFixed(1)} mmol/L`,
+      bars: glucoseBars
     }
   ];
 }
 
-function buildWeeklyBars(snapshot: DashboardSnapshot | null): WeeklyBars {
+function buildGlucoseBars(snapshot: DashboardSnapshot | null) {
+  const history = snapshot?.history?.slice(-7) ?? [];
+  const historyValues = history.map((item) => item.glucoseMmol);
+  const values = hasVisualVariance(historyValues) ? historyValues : FALLBACK_GLUCOSE_SERIES;
   const focusDate = snapshot?.focusDate ?? getTodayString();
-  const history =
-    snapshot?.history && snapshot.history.length > 0
-      ? snapshot.history
-      : Array.from({ length: 7 }, (_, index) => ({
-          date: getShiftedDateString(focusDate, index - 6),
-          calories: 0,
-          exerciseMinutes: 0,
-          steps: 0,
-          sleepHours: 0,
-          glucoseMmol: 0
-        }));
+  const labels =
+    history.length === 7
+      ? history.map((item) => compactWeekday(item.date))
+      : Array.from({ length: 7 }, (_, index) => compactWeekday(getShiftedDateString(focusDate, index - 6)));
 
-  return {
-    calorieValues: history.map((item) => ({
-      date: item.date,
-      progress: clamp(item.calories / DEFAULT_CALORIE_TARGET)
-    })),
-    exerciseValues: history.map((item) => ({
-      date: item.date,
-      progress: clamp(item.exerciseMinutes / DEFAULT_EXERCISE_TARGET)
-    }))
-  };
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const range = maxValue - minValue;
+
+  return values.map((value, index) => ({
+    label: labels[index] ?? "",
+    value,
+    ratio: range < 0.15 ? FALLBACK_BAR_RATIOS[index] : clamp(0.24 + ((value - minValue) / range) * 0.68, 0.24, 0.94)
+  }));
+}
+
+function compactWeekday(date: string) {
+  return formatWeekday(date).replace("星期", "").replace("周", "");
+}
+
+function hasVisualVariance(values: number[]) {
+  if (values.length !== 7) {
+    return false;
+  }
+
+  const maxValue = Math.max(...values);
+  const minValue = Math.min(...values);
+  return maxValue - minValue >= 0.15;
 }
 
 function resolveCalorieTarget(healthProfile: HealthProfile | null) {
@@ -607,7 +373,7 @@ function getMetricNumber(snapshot: DashboardSnapshot | null, id: string) {
   return parseLeadingNumber(findMetric(snapshot, id)?.value) ?? 0;
 }
 
-function formatPrimaryMetric(value: number) {
+function formatMetricInteger(value: number) {
   return value > 0 ? `${Math.round(value)}` : "--";
 }
 
@@ -628,274 +394,98 @@ const styles = StyleSheet.create({
     paddingHorizontal: layout.pageHorizontal,
     paddingTop: layout.pageTop,
     paddingBottom: layout.pageBottom,
-    gap: spacing.md
-  },
-  adjustmentPanel: {
-    gap: spacing.lg,
-    borderColor: "rgba(217, 150, 71, 0.12)"
-  },
-  metricsPanel: {
     gap: spacing.lg
   },
-  heroPanel: {
+  heroCard: {
     borderRadius: radii.lg,
     borderWidth: borders.standard,
-    borderColor: "rgba(16, 35, 59, 0.08)",
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     padding: spacing.lg,
-    gap: spacing.sm,
+    gap: spacing.md,
     ...shadows.card
   },
-  heroPanelPressed: {
+  heroCardPressed: {
     opacity: 0.94
   },
-  heroTopRow: {
+  heroHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: spacing.sm
   },
-  heroLabelRow: {
+  heroBadge: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm
+    gap: spacing.xs,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primarySoft,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6
   },
-  heroEyebrow: {
-    color: colors.textSoft,
+  heroBadgeText: {
+    color: colors.primary,
     fontSize: typography.caption,
-    fontWeight: "700",
-    letterSpacing: 0.4
+    fontWeight: "700"
+  },
+  heroTimestamp: {
+    color: colors.textSoft,
+    fontSize: typography.caption
   },
   heroTitle: {
     color: colors.text,
-    fontSize: 24,
-    lineHeight: 32,
+    fontSize: 28,
+    lineHeight: 34,
     fontWeight: "800"
   },
-  heroReason: {
+  heroSummary: {
     color: colors.textMuted,
     fontSize: typography.body,
-    lineHeight: 22
+    lineHeight: 24
   },
   heroFooter: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: spacing.md,
-    paddingTop: spacing.xs
+    gap: spacing.md
   },
-  parameterChip: {
+  parameterPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs,
     borderRadius: radii.pill,
-    backgroundColor: "rgba(255, 255, 255, 0.72)",
+    backgroundColor: colors.primarySoft,
     paddingHorizontal: spacing.md,
-    paddingVertical: 6
+    paddingVertical: 8
   },
-  parameterChipText: {
-    color: colors.text,
+  parameterPillText: {
+    color: colors.primary,
     fontSize: typography.label,
     fontWeight: "700"
   },
-  heroLinkRow: {
+  detailLink: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xxs
   },
-  heroLinkText: {
-    color: colors.textMuted,
+  detailLinkText: {
+    color: colors.primary,
     fontSize: typography.label,
-    fontWeight: "600"
-  },
-  metricsSection: {
-    gap: spacing.sm
-  },
-  metricsHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm
-  },
-  metricsHeaderIcon: {
-    backgroundColor: colors.primarySoft
-  },
-  metricsHeaderCopy: {
-    gap: 2
-  },
-  metricsHeaderEyebrow: {
-    color: colors.textSoft,
-    fontSize: typography.caption,
-    fontWeight: "700",
-    letterSpacing: 0.4
-  },
-  metricsHeaderTitle: {
-    color: colors.text,
-    fontSize: typography.bodyLarge,
-    fontWeight: "800"
+    fontWeight: "700"
   },
   sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: spacing.md
-  },
-  sectionHeaderMain: {
-    flex: 1,
-    flexDirection: "row",
-    gap: spacing.md
-  },
-  sectionIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: radii.md,
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  sectionCopy: {
-    flex: 1,
-    gap: spacing.xs
+    gap: spacing.xxs
   },
   sectionEyebrow: {
     color: colors.textSoft,
     fontSize: typography.caption,
     fontWeight: "700",
-    letterSpacing: 0.4
+    letterSpacing: 0.3
   },
   sectionTitle: {
     color: colors.text,
     fontSize: typography.titleSmall,
     lineHeight: 30,
-    fontWeight: "800"
-  },
-  sectionDescription: {
-    color: colors.textMuted,
-    fontSize: typography.body,
-    lineHeight: 24
-  },
-  sectionTrailing: {
-    paddingTop: spacing.xxs
-  },
-  statusChip: {
-    minHeight: 32,
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.pill,
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  statusChipText: {
-    fontSize: typography.caption,
-    fontWeight: "700"
-  },
-  summaryCard: {
-    borderRadius: radii.lg,
-    borderWidth: borders.standard,
-    borderColor: "rgba(16, 35, 59, 0.06)",
-    padding: spacing.lg,
-    gap: spacing.md,
-    ...shadows.card
-  },
-  summaryCardPressed: {
-    opacity: 0.92
-  },
-  summaryTopRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: spacing.md
-  },
-  summaryTag: {
-    color: colors.textSoft,
-    fontSize: typography.caption,
-    fontWeight: "700",
-    letterSpacing: 0.4
-  },
-  summaryHintRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs
-  },
-  summaryHintText: {
-    color: colors.textMuted,
-    fontSize: typography.label,
-    fontWeight: "600"
-  },
-  summaryMetaRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
-  },
-  metaChip: {
-    flex: 1,
-    minWidth: 132,
-    borderRadius: radii.md,
-    backgroundColor: "rgba(255, 255, 255, 0.78)",
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    gap: spacing.xs
-  },
-  metaChipLabelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs
-  },
-  metaChipLabel: {
-    color: colors.textSoft,
-    fontSize: typography.caption,
-    fontWeight: "600"
-  },
-  metaChipValue: {
-    color: colors.text,
-    fontSize: typography.body,
-    fontWeight: "700"
-  },
-  summaryLead: {
-    color: colors.text,
-    fontSize: 28,
-    lineHeight: 38,
-    fontWeight: "800"
-  },
-  summarySignal: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: spacing.sm,
-    borderRadius: radii.md,
-    backgroundColor: "rgba(255, 255, 255, 0.66)",
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm
-  },
-  summarySignalText: {
-    flex: 1,
-    color: colors.textMuted,
-    fontSize: typography.body,
-    lineHeight: 24
-  },
-  feedbackRow: {
-    flexDirection: "row",
-    gap: spacing.sm
-  },
-  feedbackButton: {
-    flex: 1,
-    minHeight: 52,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.sm,
-    ...shadows.card
-  },
-  feedbackButtonActive: {
-    transform: [{ scale: 0.99 }]
-  },
-  feedbackButtonDisabled: {
-    opacity: 0.6
-  },
-  feedbackButtonPressed: {
-    opacity: 0.9
-  },
-  feedbackButtonText: {
-    color: colors.inverseText,
-    fontSize: typography.body,
     fontWeight: "800"
   },
   metricGrid: {
@@ -910,33 +500,37 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderWidth: borders.standard,
     borderColor: colors.border,
-    padding: spacing.sm,
-    gap: spacing.sm
+    backgroundColor: colors.surface,
+    padding: spacing.md,
+    gap: spacing.md,
+    ...shadows.card
   },
   metricCardWide: {
     width: "100%",
     borderRadius: radii.lg,
     borderWidth: borders.standard,
     borderColor: colors.border,
-    padding: spacing.sm,
-    gap: spacing.sm
+    backgroundColor: colors.surface,
+    padding: spacing.md,
+    gap: spacing.md,
+    ...shadows.card
   },
-  metricCardHeader: {
+  metricHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md
   },
   metricIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 14,
-    backgroundColor: "rgba(255, 255, 255, 0.82)",
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: colors.primarySoft,
     alignItems: "center",
     justifyContent: "center"
   },
-  metricCopy: {
+  metricHeaderCopy: {
     flex: 1,
-    gap: spacing.xxs
+    gap: 2
   },
   metricLabel: {
     color: colors.text,
@@ -944,48 +538,51 @@ const styles = StyleSheet.create({
     fontWeight: "800"
   },
   metricDescriptor: {
-    color: colors.textMuted,
+    color: colors.textSoft,
     fontSize: typography.caption,
     lineHeight: 18
   },
-  metricVisualRow: {
+  metricRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: spacing.md
   },
-  trendMetricBody: {
+  trendBody: {
     flexDirection: "row",
     alignItems: "flex-end",
     gap: spacing.md
   },
-  metricValueStack: {
+  metricValueBlock: {
     flex: 1,
-    gap: spacing.xxs
+    gap: spacing.xs
   },
   metricValueText: {
     color: colors.text,
-    fontSize: 24,
-    lineHeight: 30,
-    fontWeight: "800"
+    fontSize: 40,
+    lineHeight: 44,
+    fontWeight: "800",
+    letterSpacing: -0.5
   },
   metricUnitText: {
-    color: colors.textMuted,
-    fontSize: typography.body,
-    fontWeight: "700"
+    color: colors.textSoft,
+    fontSize: typography.caption,
+    fontWeight: "600"
   },
   metricStatusText: {
-    color: colors.text,
-    fontSize: typography.label,
-    fontWeight: "700"
-  },
-  metricTargetText: {
     color: colors.textMuted,
+    fontSize: typography.label,
+    lineHeight: 20,
+    fontWeight: "600"
+  },
+  metricHelperText: {
+    color: colors.textSoft,
     fontSize: typography.caption,
     lineHeight: 18
   },
   ringWrap: {
-    width: 78,
-    height: 78,
+    width: 64,
+    height: 64,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -995,126 +592,66 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   ringPercentText: {
-    color: colors.text,
-    fontSize: typography.label,
+    color: colors.primary,
+    fontSize: typography.caption,
     fontWeight: "800"
   },
-  miniBarChart: {
+  barChart: {
     flex: 1,
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",
-    gap: spacing.xs,
-    minHeight: 96
+    gap: spacing.sm,
+    minHeight: 108
   },
-  miniBarItem: {
-    flex: 1,
-    height: 96,
-    justifyContent: "flex-end"
-  },
-  miniBarTrack: {
-    flex: 1,
-    borderRadius: radii.pill,
-    backgroundColor: "rgba(255, 255, 255, 0.58)",
-    overflow: "hidden",
-    justifyContent: "flex-end"
-  },
-  miniBarFill: {
-    width: "100%",
-    borderRadius: radii.pill,
-    minHeight: 6
-  },
-  weeklyTrendCard: {
-    borderRadius: radii.lg,
-    borderWidth: borders.standard,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceMuted,
-    padding: spacing.md,
-    gap: spacing.md
-  },
-  weeklyTrendTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md
-  },
-  weeklyIconWrap: {
-    backgroundColor: colors.backgroundAccent
-  },
-  weeklyTrendCopy: {
-    flex: 1,
-    gap: spacing.xxs
-  },
-  weeklyTrendTitle: {
-    color: colors.text,
-    fontSize: typography.bodyLarge,
-    fontWeight: "800"
-  },
-  weeklyTrendDescription: {
-    color: colors.textMuted,
-    fontSize: typography.label,
-    lineHeight: 20
-  },
-  trendRow: {
-    gap: spacing.sm
-  },
-  trendRowLabel: {
-    color: colors.text,
-    fontSize: typography.label,
-    fontWeight: "700"
-  },
-  trendBars: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: spacing.sm
-  },
-  trendBarItem: {
+  barColumn: {
     flex: 1,
     alignItems: "center",
     gap: spacing.xs
   },
-  trendBarTrack: {
+  barTrack: {
     width: "100%",
-    height: 64,
-    borderRadius: radii.md,
-    backgroundColor: colors.surface,
+    height: 86,
+    borderRadius: radii.pill,
+    backgroundColor: "rgba(0, 82, 204, 0.08)",
     overflow: "hidden",
     justifyContent: "flex-end"
   },
-  trendBarFill: {
+  barFill: {
     width: "100%",
-    borderRadius: radii.md,
-    minHeight: 10
+    borderRadius: radii.pill,
+    minHeight: 12,
+    backgroundColor: colors.primary
   },
-  trendBarLabel: {
+  barLabel: {
     color: colors.textSoft,
     fontSize: typography.caption,
     fontWeight: "600"
   },
-  observationCard: {
-    borderRadius: radii.lg,
-    borderWidth: borders.standard,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    padding: spacing.md
+  syncHeader: {
+    gap: spacing.sm
   },
-  observationHeader: {
+  syncBadge: {
+    alignSelf: "flex-start",
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: spacing.md
+    alignItems: "center",
+    gap: spacing.xs,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primarySoft,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6
   },
-  observationIconWrap: {
-    backgroundColor: colors.primarySoft
+  syncBadgeText: {
+    color: colors.primary,
+    fontSize: typography.caption,
+    fontWeight: "700"
   },
-  observationCopy: {
-    flex: 1,
-    gap: spacing.xs
-  },
-  observationLabel: {
+  syncTitle: {
     color: colors.text,
     fontSize: typography.bodyLarge,
     fontWeight: "800"
   },
-  observationText: {
+  syncDescription: {
     color: colors.textMuted,
     fontSize: typography.body,
     lineHeight: 24

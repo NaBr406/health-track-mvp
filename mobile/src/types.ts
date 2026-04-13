@@ -10,6 +10,8 @@ export type DataSource = "server" | "mock";
 export type HealthProfile = {
   email?: string | null;
   nickname: string;
+  avatarPresetId?: string | null;
+  avatarUri?: string | null;
   conditionLabel: string;
   primaryTarget: string;
   age?: number | null;

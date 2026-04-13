@@ -1,10 +1,12 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MonoValue, OutlineButton, Panel, SectionHeader } from "../../components/clinical";
+import { ProfileAvatar } from "../../components/ProfileAvatar";
 import { api } from "../../lib/api";
-import { useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
 import { average, formatDisplayDate, formatTime } from "../../lib/utils";
+import { useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
 import { borders, colors, layout, radii, spacing, typography } from "../../theme/tokens";
 import type { AuthSession, ChatThread, DashboardSnapshot, HealthProfile } from "../../types";
 
@@ -46,6 +48,13 @@ export function ProfileScreen({
 
   const userMessageCount = thread?.messages.filter((item) => item.role === "user").length ?? 0;
   const dataSource = snapshot?.dataSource ?? thread?.dataSource ?? "mock";
+  const displayName = healthProfile?.nickname || session?.nickname || "健康用户";
+  const displayEmail = healthProfile?.email || session?.email || "本地访客模式";
+  const displayCondition = healthProfile?.conditionLabel || "尚未补充疾病标签";
+  const avatarModeLabel = healthProfile?.avatarUri ? "已使用自定义头像" : "当前使用预设头像";
+  const lastUpdatedLabel = healthProfile?.updatedAt
+    ? `最近更新 ${formatDisplayDate(healthProfile.updatedAt.slice(0, 10))}`
+    : "个人主页";
 
   const stats = useMemo(() => {
     if (!snapshot) {
@@ -94,71 +103,60 @@ export function ProfileScreen({
         showsVerticalScrollIndicator={false}
       >
         <Panel style={styles.heroCard}>
-          <SectionHeader
-            eyebrow={healthProfile ? `更新于 ${formatDisplayDate(healthProfile.updatedAt.slice(0, 10))}` : "个人主页"}
-            title="健康档案与历史概览"
-            description="这里负责展示基线信息、统计摘要和设置，不再承载任何日常打卡入口。"
-            trailing={<OutlineButton compact label="编辑档案" onPress={onEditHealthProfile} variant="ghost" />}
-          />
-          <View style={[styles.statusBadge, dataSource === "server" ? styles.statusBadgeServer : styles.statusBadgeMock]}>
-            <Text style={[styles.statusBadgeText, dataSource === "server" ? styles.statusBadgeTextServer : styles.statusBadgeTextMock]}>
-              {dataSource === "server" ? "后端同步中" : "当前使用离线演示数据"}
-            </Text>
+          <View style={styles.heroTopRow}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onEditHealthProfile}
+              style={({ pressed }) => [styles.avatarTrigger, pressed ? styles.avatarTriggerPressed : null]}
+            >
+              <ProfileAvatar avatarUri={healthProfile?.avatarUri} nickname={displayName} presetId={healthProfile?.avatarPresetId} size={86} />
+              <View style={styles.avatarEditBadge}>
+                <Ionicons color={colors.inverseText} name="pencil" size={14} />
+              </View>
+            </Pressable>
+
+            <View style={styles.heroCopy}>
+              <Text style={styles.heroEyebrow}>{lastUpdatedLabel}</Text>
+              <Text style={styles.heroName}>{displayName}</Text>
+              <Text style={styles.heroCondition}>{displayCondition}</Text>
+              <Text style={styles.heroEmail}>{displayEmail}</Text>
+            </View>
+          </View>
+
+          <View style={styles.avatarHintRow}>
+            <View style={styles.avatarModeBadge}>
+              <Ionicons color={colors.primary} name={healthProfile?.avatarUri ? "image-outline" : "sparkles-outline"} size={15} />
+              <Text style={styles.avatarModeBadgeText}>{avatarModeLabel}</Text>
+            </View>
+            <Text style={styles.avatarHintText}>点击顶部头像或“编辑资料”，即可更换头像、昵称和基础信息。</Text>
+          </View>
+
+          <View style={styles.heroActionRow}>
+            <View style={[styles.statusBadge, dataSource === "server" ? styles.statusBadgeServer : styles.statusBadgeMock]}>
+              <Text style={[styles.statusBadgeText, dataSource === "server" ? styles.statusBadgeTextServer : styles.statusBadgeTextMock]}>
+                {dataSource === "server" ? "已连接云端" : "当前为本地离线模式"}
+              </Text>
+            </View>
+            <OutlineButton label="编辑资料" onPress={onEditHealthProfile} variant="ghost" />
           </View>
         </Panel>
 
         <Panel>
           <SectionHeader
-            eyebrow={session ? "已登录账户" : "访客模式"}
-            title={healthProfile?.nickname || session?.nickname || "健康用户"}
-            description={healthProfile?.conditionLabel || "尚未补充疾病标签"}
+            eyebrow="资料概览"
+            title="头像、昵称与基础档案"
+            description="这里保留为唯一的结构化资料编辑入口。日常记录已经取消表单，继续统一通过 AI 对话完成。"
           />
-          <Text style={styles.accountLine}>{healthProfile?.email || session?.email || "本地访客模式"}</Text>
-          <Text style={styles.accountHint}>
-            {session
-              ? "账户已登录，健康记录和主页摘要可以继续同步到多设备。"
-              : "未登录也能完成建档与对话归档；只有在需要跨设备同步时才需要登录。"}
-          </Text>
-          <View style={styles.actionRow}>
-            {session ? (
-              <OutlineButton label="退出登录" onPress={() => void onLogout()} variant="secondary" />
-            ) : (
-              <OutlineButton label="登录同步" onPress={onRequestSignIn} variant="primary" />
-            )}
-          </View>
-        </Panel>
 
-        <Panel>
-          <SectionHeader
-            eyebrow="健康档案"
-            title="基线信息"
-            description="这些字段只来自建档向导，后续的每天变化会自动归档到健康记录中。"
-          />
           <View style={styles.profileGrid}>
-            <View style={styles.profileCell}>
-              <Text style={styles.profileLabel}>疾病标签</Text>
-              <Text style={styles.profileValue}>{healthProfile?.conditionLabel || "--"}</Text>
-            </View>
-            <View style={styles.profileCell}>
-              <Text style={styles.profileLabel}>阶段目标</Text>
-              <Text style={styles.profileValue}>{healthProfile?.primaryTarget || "--"}</Text>
-            </View>
-            <View style={styles.profileCell}>
-              <Text style={styles.profileLabel}>空腹血糖基线</Text>
-              <Text style={styles.profileValue}>{healthProfile?.fastingGlucoseBaseline || "--"}</Text>
-            </View>
-            <View style={styles.profileCell}>
-              <Text style={styles.profileLabel}>血压基线</Text>
-              <Text style={styles.profileValue}>{healthProfile?.bloodPressureBaseline || "--"}</Text>
-            </View>
-            <View style={styles.profileCell}>
-              <Text style={styles.profileLabel}>当前用药</Text>
-              <Text style={styles.profileValue}>{healthProfile?.medicationPlan || "--"}</Text>
-            </View>
-            <View style={styles.profileCell}>
-              <Text style={styles.profileLabel}>照护重点</Text>
-              <Text style={styles.profileValue}>{healthProfile?.careFocus || "--"}</Text>
-            </View>
+            <ProfileCell label="昵称" value={displayName} />
+            <ProfileCell label="疾病标签" value={healthProfile?.conditionLabel || "--"} />
+            <ProfileCell label="阶段目标" value={healthProfile?.primaryTarget || "--"} />
+            <ProfileCell label="空腹血糖基线" value={healthProfile?.fastingGlucoseBaseline || "--"} />
+            <ProfileCell label="血压基线" value={healthProfile?.bloodPressureBaseline || "--"} />
+            <ProfileCell label="当前用药" value={healthProfile?.medicationPlan || "--"} />
+            <ProfileCell label="照护重点" value={healthProfile?.careFocus || "--"} />
+            <ProfileCell label="补充备注" value={healthProfile?.notes || "--"} />
           </View>
         </Panel>
 
@@ -166,7 +164,7 @@ export function ProfileScreen({
           <SectionHeader
             eyebrow="历史统计"
             title="最近 7 日概览"
-            description={loading ? "正在同步 AI 对话和监测摘要..." : "基于最近 7 日归档结果自动计算。"}
+            description={loading ? "正在同步 AI 对话与监测摘要..." : "基于最近 7 日归档结果自动计算。"}
           />
           <View style={styles.statsGrid}>
             {stats.map((item) => (
@@ -183,29 +181,47 @@ export function ProfileScreen({
 
         <Panel>
           <SectionHeader
-            eyebrow="设置"
-            title="当前交互规则"
-            description="保留必要配置入口，避免重新长出表单中心。"
+            eyebrow="账户与设置"
+            title="同步状态与当前规则"
+            description="基础档案支持随时修改。饮食、运动、睡眠等动态记录继续只保留 AI 对话入口。"
           />
+
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>当前数据源</Text>
-            <Text style={styles.settingValue}>{dataSource === "server" ? "后端实时接口" : "本地 mock / 离线模式"}</Text>
+            <Text style={styles.settingValue}>{dataSource === "server" ? "后端实时接口" : "本地离线模式"}</Text>
           </View>
           <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>档案向导</Text>
-            <Text style={styles.settingValue}>保留，可随时重进编辑基线</Text>
+            <Text style={styles.settingLabel}>头像模式</Text>
+            <Text style={styles.settingValue}>{healthProfile?.avatarUri ? "自定义头像" : "预设头像"}</Text>
           </View>
           <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>语音输入</Text>
-            <Text style={styles.settingValue}>已预留前端按钮和 API 占位</Text>
+            <Text style={styles.settingLabel}>档案编辑</Text>
+            <Text style={styles.settingValue}>支持修改头像、昵称与基础资料</Text>
           </View>
           <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>日常打卡表单</Text>
-            <Text style={styles.settingValue}>已移除，统一改为自然语言记录</Text>
+            <Text style={styles.settingLabel}>日常记录入口</Text>
+            <Text style={styles.settingValue}>仅保留 AI 对话页</Text>
+          </View>
+
+          <View style={styles.accountActionRow}>
+            {session ? (
+              <OutlineButton label="退出登录" onPress={() => void onLogout()} variant="secondary" />
+            ) : (
+              <OutlineButton label="登录同步" onPress={onRequestSignIn} variant="primary" />
+            )}
           </View>
         </Panel>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function ProfileCell({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.profileCell}>
+      <Text style={styles.profileLabel}>{label}</Text>
+      <Text style={styles.profileValue}>{value}</Text>
+    </View>
   );
 }
 
@@ -221,20 +237,87 @@ const styles = StyleSheet.create({
     gap: spacing.lg
   },
   heroCard: {
-    backgroundColor: colors.surfaceTint
+    backgroundColor: colors.surfaceTint,
+    gap: spacing.lg
   },
-  accountLine: {
+  heroTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.lg
+  },
+  avatarTrigger: {
+    position: "relative"
+  },
+  avatarTriggerPressed: {
+    opacity: 0.9
+  },
+  avatarEditBadge: {
+    position: "absolute",
+    right: 2,
+    bottom: 2,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: borders.standard,
+    borderColor: colors.surface
+  },
+  heroCopy: {
+    flex: 1,
+    gap: spacing.xs
+  },
+  heroEyebrow: {
+    color: colors.textSoft,
+    fontSize: typography.caption,
+    fontWeight: "700",
+    letterSpacing: 0.4
+  },
+  heroName: {
+    color: colors.text,
+    fontSize: typography.titleMedium,
+    lineHeight: 38,
+    fontWeight: "800"
+  },
+  heroCondition: {
     color: colors.text,
     fontSize: typography.bodyLarge,
     fontWeight: "700"
   },
-  accountHint: {
+  heroEmail: {
+    color: colors.textMuted,
+    fontSize: typography.body,
+    lineHeight: 22
+  },
+  avatarHintRow: {
+    gap: spacing.sm
+  },
+  avatarModeBadge: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primarySoft,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6
+  },
+  avatarModeBadgeText: {
+    color: colors.primary,
+    fontSize: typography.caption,
+    fontWeight: "700"
+  },
+  avatarHintText: {
     color: colors.textMuted,
     fontSize: typography.body,
     lineHeight: 24
   },
-  actionRow: {
+  heroActionRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
     gap: spacing.sm
   },
   profileGrid: {
@@ -306,6 +389,11 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: typography.body,
     textAlign: "right"
+  },
+  accountActionRow: {
+    flexDirection: "row",
+    justifyContent: "flex-start",
+    paddingTop: spacing.sm
   },
   statusBadge: {
     alignSelf: "flex-start",

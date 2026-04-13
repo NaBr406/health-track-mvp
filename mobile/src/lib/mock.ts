@@ -11,6 +11,8 @@ export const mockSession: AuthSession = {
 export const mockHealthProfile: HealthProfile = {
   email: mockSession.email,
   nickname: "林岚",
+  avatarPresetId: "pulse",
+  avatarUri: null,
   conditionLabel: "2 型糖尿病",
   primaryTarget: "降低餐后波动并稳定体重",
   age: 42,
@@ -22,7 +24,7 @@ export const mockHealthProfile: HealthProfile = {
   bloodPressureBaseline: "128/82 mmHg",
   restingHeartRate: 74,
   medicationPlan: "二甲双胍 0.5g bid；晚间按需监测血糖。",
-  careFocus: "晚餐后步行与睡前恢复流程",
+  careFocus: "晚饭后步行与睡前恢复流程",
   notes: "对高 GI 主食敏感，午后久坐时波动更明显。",
   updatedAt: new Date().toISOString(),
   completedAt: new Date().toISOString()

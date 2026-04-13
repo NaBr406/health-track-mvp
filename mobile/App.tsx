@@ -103,7 +103,7 @@ export default function App() {
             <View style={styles.loadingCard}>
               <ActivityIndicator color={colors.primary} size="large" />
               <Text style={styles.loadingTitle}>生命卫士</Text>
-              <Text style={styles.loadingSubtitle}>正在载入对话式健康管理界面，日常记录将全部从 AI 交流页进入。</Text>
+              <Text style={styles.loadingSubtitle}>正在载入对话式健康管理界面。日常记录将统一通过 AI 交流页完成。</Text>
             </View>
           </View>
         ) : (

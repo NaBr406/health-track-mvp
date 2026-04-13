@@ -131,8 +131,8 @@ const styles = StyleSheet.create({
     minHeight: layout.tabBarHeight,
     borderRadius: radii.xl,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.7)",
-    backgroundColor: "rgba(255, 255, 255, 0.94)",
+    borderColor: colors.border,
+    backgroundColor: "rgba(255, 255, 255, 0.98)",
     padding: spacing.xs,
     gap: spacing.xs,
     ...shadows.lift
@@ -151,7 +151,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primarySoft
   },
   itemPressed: {
-    backgroundColor: "rgba(231, 238, 246, 0.8)"
+    backgroundColor: colors.pressed
   },
   label: {
     color: colors.textMuted,

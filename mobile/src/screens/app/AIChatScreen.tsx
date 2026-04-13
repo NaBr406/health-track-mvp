@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
+import { useEffect, useRef, useState } from "react";
 import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "../../lib/api";
-import { useImmersiveTabBar, useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
 import { formatTime, getTodayString } from "../../lib/utils";
+import { useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
 import { borders, colors, layout, radii, spacing, typography } from "../../theme/tokens";
 import type { AuthSession, ChatMessage, HealthProfile } from "../../types";
 
@@ -28,7 +28,6 @@ export function AIChatScreen({
   const [capabilityNote, setCapabilityNote] = useState("");
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const insets = useSafeAreaInsets();
-  const { hidden } = useImmersiveTabBar();
   const { bottomInset, onScroll, onScrollBeginDrag, onScrollEndDrag, scrollEventThrottle } = useImmersiveTabBarScroll();
 
   useEffect(() => {
@@ -50,14 +49,14 @@ export function AIChatScreen({
 
     if (!content) {
       if (inputMode === "voice") {
-        setCapabilityNote("语音按钮已预留接口，接入录音和转写后可直接发送语音内容。");
+        setCapabilityNote("语音入口已预留，接入录音与转写后会直接把语音内容发送到今天的对话。");
       }
 
       return;
     }
 
     setSending(true);
-    setCapabilityNote(inputMode === "voice" ? "当前为语音占位提交通路，后续会替换为真实录音与转写上传。" : "");
+    setCapabilityNote(inputMode === "voice" ? "当前会沿用文本提交通道，后续可替换为真实录音与转写上传。" : "");
 
     try {
       const result = await api.sendChatMessage({
@@ -75,12 +74,12 @@ export function AIChatScreen({
     }
   }
 
-  const threadHint = dataSource === "server" ? "消息正在写入后端" : "当前为离线演示线程";
+  const threadHint = dataSource === "server" ? "消息已连接云端" : "当前为本地离线记录";
   const voiceButtonDisabled = sending;
   const sendButtonDisabled = sending || !draft.trim();
   const composerPaddingBottom = Platform.OS === "ios" ? Math.max(insets.bottom, spacing.xs) : spacing.xs;
   const hiddenComposerFloor = Platform.OS === "android" ? Math.max(insets.bottom, spacing.xxxl) : Math.max(insets.bottom, spacing.sm);
-  const composerMarginBottom = hidden ? hiddenComposerFloor : bottomInset - composerPaddingBottom;
+  const composerMarginBottom = bottomInset > 0 ? bottomInset - composerPaddingBottom : hiddenComposerFloor;
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safeArea}>
@@ -146,7 +145,7 @@ export function AIChatScreen({
 
             {!session ? (
               <View style={styles.guestRow}>
-                <Text style={styles.guestText}>访客模式也能记录，对话登录后再同步。</Text>
+                <Text style={styles.guestText}>访客模式也能继续记录，登录后再同步到云端。</Text>
                 <Pressable
                   accessibilityRole="button"
                   onPress={onRequestSignIn}
@@ -162,7 +161,7 @@ export function AIChatScreen({
                 blurOnSubmit={false}
                 onChangeText={setDraft}
                 onSubmitEditing={() => void handleSend("text")}
-                placeholder="描述今天的饮食、运动、睡眠或指标..."
+                placeholder="描述今天的饮食、运动、睡眠或身体变化..."
                 placeholderTextColor={colors.textSoft}
                 returnKeyType="send"
                 style={styles.input}
@@ -249,10 +248,10 @@ const styles = StyleSheet.create({
   },
   messageBubbleUser: {
     backgroundColor: colors.primarySoft,
-    borderColor: colors.primarySoft
+    borderColor: "rgba(0, 82, 204, 0.14)"
   },
   messageBubbleSystem: {
-    backgroundColor: colors.surfaceWarm
+    backgroundColor: colors.surface
   },
   messageText: {
     color: colors.text,
@@ -317,7 +316,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     borderWidth: borders.standard,
     borderColor: colors.border,
-    backgroundColor: colors.surfaceMuted,
+    backgroundColor: colors.surface,
     color: colors.text,
     paddingHorizontal: spacing.lg,
     fontSize: typography.body
@@ -335,7 +334,7 @@ const styles = StyleSheet.create({
   iconButtonSecondary: {
     borderWidth: borders.standard,
     borderColor: colors.border,
-    backgroundColor: colors.primarySoft
+    backgroundColor: colors.surface
   },
   iconButtonDisabled: {
     opacity: 0.45

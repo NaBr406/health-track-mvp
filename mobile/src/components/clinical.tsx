@@ -137,7 +137,7 @@ const buttonVariantStyles = StyleSheet.create({
     backgroundColor: colors.warningSoft
   },
   ghost: {
-    borderColor: "transparent",
+    borderColor: colors.primarySoft,
     backgroundColor: colors.primarySoft
   }
 });
@@ -218,7 +218,7 @@ const styles = StyleSheet.create({
     color: colors.textSoft,
     fontSize: typography.caption,
     fontWeight: "600",
-    letterSpacing: 0.4
+    letterSpacing: 0.3
   },
   sectionTitle: {
     color: colors.text,
@@ -271,7 +271,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     borderWidth: borders.standard,
     borderColor: colors.border,
-    backgroundColor: colors.surfaceMuted,
+    backgroundColor: colors.surface,
     color: colors.text,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
@@ -284,14 +284,14 @@ const styles = StyleSheet.create({
   monoValue: {
     color: colors.text,
     fontFamily: fonts.display,
-    fontSize: typography.titleMedium,
+    fontSize: 34,
     lineHeight: 38,
-    fontWeight: "700"
+    fontWeight: "800"
   },
   monoUnit: {
-    color: colors.textMuted,
+    color: colors.textSoft,
     fontFamily: fonts.sans,
-    fontSize: typography.bodyLarge,
+    fontSize: typography.label,
     fontWeight: "600"
   }
 });

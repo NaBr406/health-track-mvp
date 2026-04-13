@@ -27,12 +27,8 @@ export function AdjustmentDetailScreen({ navigation, route }: AdjustmentDetailSc
           <View style={styles.headerSpacer} />
         </View>
 
-        <Panel style={styles.heroPanel}>
-          <SectionHeader
-            eyebrow={formatDisplayDate(snapshot.focusDate)}
-            title={snapshot.adjustment.title}
-            description={snapshot.headline}
-          />
+        <Panel>
+          <SectionHeader eyebrow={formatDisplayDate(snapshot.focusDate)} title={snapshot.adjustment.title} description={snapshot.headline} />
           <View style={styles.metricGrid}>
             <View style={styles.metricCard}>
               <Text style={styles.metricLabel}>调整参数</Text>
@@ -46,26 +42,22 @@ export function AdjustmentDetailScreen({ navigation, route }: AdjustmentDetailSc
         </Panel>
 
         <Panel>
-          <SectionHeader eyebrow="简要建议" title="今天执行重点" />
+          <SectionHeader eyebrow="今日摘要" title="执行重点" />
           <Text style={styles.summaryText}>{snapshot.adjustment.summary}</Text>
         </Panel>
 
         <Panel>
-          <SectionHeader eyebrow="详细说明" title="AI 推演依据" />
+          <SectionHeader eyebrow="推演依据" title="AI 分析说明" />
           <Text style={styles.bodyText}>{snapshot.adjustment.rationale}</Text>
         </Panel>
 
         <Panel>
-          <SectionHeader eyebrow="系统观察" title="今天提醒" />
+          <SectionHeader eyebrow="系统观察" title="今日提醒" />
           <Text style={styles.bodyText}>{snapshot.observation}</Text>
         </Panel>
 
         <Panel>
-          <SectionHeader
-            eyebrow="参考指标"
-            title="今日监测摘要"
-            description="以下指标用于辅助理解这次建议。"
-          />
+          <SectionHeader eyebrow="参考指标" title="今日监测摘要" description="以下指标用于辅助理解这次建议的上下文。" />
           <View style={styles.supportGrid}>
             {snapshot.metrics.map((metric) => (
               <View key={metric.id} style={styles.supportCard}>
@@ -118,9 +110,6 @@ const styles = StyleSheet.create({
   headerSpacer: {
     width: 44
   },
-  heroPanel: {
-    backgroundColor: colors.surfaceWarm
-  },
   metricGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -168,7 +157,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     borderWidth: borders.standard,
     borderColor: colors.border,
-    backgroundColor: colors.surfaceMuted,
+    backgroundColor: colors.surface,
     padding: spacing.md,
     gap: spacing.xs
   },
@@ -178,7 +167,8 @@ const styles = StyleSheet.create({
     fontWeight: "600"
   },
   supportDescriptor: {
-    color: colors.text,
-    fontSize: typography.body
+    color: colors.textMuted,
+    fontSize: typography.body,
+    lineHeight: 22
   }
 });

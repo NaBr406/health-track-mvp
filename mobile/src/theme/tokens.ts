@@ -1,29 +1,29 @@
 import { Platform } from "react-native";
 
 export const colors = {
-  background: "#F4F7FA",
-  backgroundAccent: "#EDF4FB",
+  background: "#F7F9FC",
+  backgroundAccent: "#F7F9FC",
   surface: "#FFFFFF",
-  surfaceMuted: "#F8FBFE",
-  surfaceTint: "#EBF4FF",
-  surfaceWarm: "#FFF7EC",
-  border: "rgba(16, 35, 59, 0.08)",
-  borderStrong: "rgba(16, 35, 59, 0.16)",
-  divider: "#E3EAF2",
+  surfaceMuted: "#FFFFFF",
+  surfaceTint: "#FFFFFF",
+  surfaceWarm: "#FFFFFF",
+  border: "#E5E7EB",
+  borderStrong: "#D7DEE7",
+  divider: "#ECEFF3",
   text: "#10233B",
-  textMuted: "#5B6B7E",
-  textSoft: "#8A97A6",
-  primary: "#2F7CF6",
-  primarySoft: "#E8F1FF",
-  success: "#70AE7D",
-  successSoft: "#EBF7EE",
-  warning: "#D99647",
-  warningSoft: "#FFF4E6",
-  danger: "#DD7B52",
-  dangerSoft: "#FFF0EA",
+  textMuted: "#64748B",
+  textSoft: "#9CA3AF",
+  primary: "#0052CC",
+  primarySoft: "rgba(0, 82, 204, 0.08)",
+  success: "#0052CC",
+  successSoft: "rgba(0, 82, 204, 0.08)",
+  warning: "#0052CC",
+  warningSoft: "rgba(0, 82, 204, 0.08)",
+  danger: "#C53D3D",
+  dangerSoft: "rgba(197, 61, 61, 0.10)",
   inverseSurface: "#10233B",
   inverseText: "#FFFFFF",
-  pressed: "#E7EEF6",
+  pressed: "rgba(0, 82, 204, 0.06)",
   overlay: "rgba(16, 35, 59, 0.18)"
 } as const;
 
@@ -90,25 +90,25 @@ export const fonts = {
 export const shadows = {
   card: Platform.select({
     ios: {
-      shadowColor: "#16324F",
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: 0.07,
-      shadowRadius: 18
+      shadowColor: "#10233B",
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.04,
+      shadowRadius: 16
     },
     android: {
-      elevation: 2
+      elevation: 1
     },
     default: {}
   }) ?? {},
   lift: Platform.select({
     ios: {
-      shadowColor: "#16324F",
-      shadowOffset: { width: 0, height: 14 },
-      shadowOpacity: 0.1,
-      shadowRadius: 24
+      shadowColor: "#10233B",
+      shadowOffset: { width: 0, height: 12 },
+      shadowOpacity: 0.07,
+      shadowRadius: 22
     },
     android: {
-      elevation: 3
+      elevation: 2
     },
     default: {}
   }) ?? {}
