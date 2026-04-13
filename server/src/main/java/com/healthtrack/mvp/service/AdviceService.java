@@ -49,6 +49,12 @@ public class AdviceService {
                 .orElseGet(() -> generateAndSaveAdvice(userId, adviceDate));
     }
 
+    @Transactional
+    public DailyAdviceResponse refreshDailyAdvice(Long userId, LocalDate targetDate) {
+        LocalDate adviceDate = targetDate != null ? targetDate : LocalDate.now();
+        return generateAndSaveAdvice(userId, adviceDate);
+    }
+
     private DailyAdviceResponse generateAndSaveAdvice(Long userId, LocalDate adviceDate) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));

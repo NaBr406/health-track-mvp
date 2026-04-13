@@ -12,6 +12,8 @@
 .DS_Store
 /.idea/
 /.codex-*.log
+/.android-home/
+/.android-user/
 /mobile/android/.gradle
 /mobile/android/.cxx
 /mobile/android/app/build

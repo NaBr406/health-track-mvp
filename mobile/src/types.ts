@@ -5,82 +5,100 @@ export type AuthSession = {
   nickname: string;
 };
 
-export type Profile = {
-  email: string;
+export type DataSource = "server" | "mock";
+
+export type HealthProfile = {
+  email?: string | null;
   nickname: string;
+  conditionLabel: string;
+  primaryTarget: string;
   age?: number | null;
-  gender?: string | null;
+  biologicalSex?: string | null;
   heightCm?: number | null;
   weightKg?: number | null;
   targetWeightKg?: number | null;
-  dailyCalorieGoal?: number | null;
-  weeklyExerciseGoalMinutes?: number | null;
+  fastingGlucoseBaseline?: string | null;
+  bloodPressureBaseline?: string | null;
+  restingHeartRate?: number | null;
+  medicationPlan?: string | null;
   careFocus?: string | null;
-  healthGoal?: string | null;
-  updatedAt?: string | null;
+  notes?: string | null;
+  updatedAt: string;
+  completedAt: string;
 };
 
-export type DietRecord = {
-  id: number;
-  recordedOn: string;
-  mealType: string;
-  foodName: string;
-  calories: number;
-  proteinGrams?: number | null;
-  carbsGrams?: number | null;
-  fatGrams?: number | null;
-  note?: string | null;
-  createdAt: string;
-};
+export type AdjustmentFeedback = "accept" | "reject" | null;
 
-export type ExerciseRecord = {
-  id: number;
-  recordedOn: string;
-  activityName: string;
-  durationMinutes: number;
-  caloriesBurned?: number | null;
-  intensity?: string | null;
-  note?: string | null;
-  createdAt: string;
-};
-
-export type CareRecord = {
-  id: number;
-  recordedOn: string;
-  category: string;
-  itemName: string;
-  durationMinutes?: number | null;
-  status?: string | null;
-  note?: string | null;
-  createdAt: string;
-};
-
-export type DailyAdvice = {
-  adviceDate: string;
-  adviceText: string;
-  source: string;
-  status: string;
+export type PlanAdjustment = {
+  id: string;
+  title: string;
+  summary: string;
+  parameterLabel: string;
+  parameterDelta: string;
+  rationale: string;
   generatedAt: string;
+  feedback: AdjustmentFeedback;
 };
 
-export type DailySummaryPoint = {
+export type DashboardMetric = {
+  id: string;
+  label: string;
+  value: string;
+  unit?: string;
+  descriptor: string;
+  source: string;
+};
+
+export type MonitoringHistoryPoint = {
   date: string;
   calories: number;
   exerciseMinutes: number;
-  careMinutes: number;
+  steps: number;
+  sleepHours: number;
+  glucoseMmol: number;
 };
 
-export type DashboardSummary = {
+export type DashboardSnapshot = {
   focusDate: string;
-  dietCount: number;
-  exerciseCount: number;
-  careCount: number;
-  totalCalories: number;
-  totalExerciseMinutes: number;
-  totalCareMinutes: number;
-  dailyCalorieGoal: number;
-  weeklyExerciseGoalMinutes: number;
-  goalCompletionRate: number;
-  weeklyActivity: DailySummaryPoint[];
-  latestAdvice: string;
+  headline: string;
+  adjustment: PlanAdjustment;
+  metrics: DashboardMetric[];
+  observation: string;
+  refreshedAt: string;
+  history: MonitoringHistoryPoint[];
+  dataSource: DataSource;
+};
+
+export type ChatRole = "assistant" | "user" | "system";
+
+export type ChatMessage = {
+  id: string;
+  role: ChatRole;
+  content: string;
+  createdAt: string;
+};
+
+export type ChatThread = {
+  focusDate: string;
+  messages: ChatMessage[];
+  dataSource: DataSource;
+};
+
+export type ChatSendPayload = {
+  message: string;
+  inputMode: "text" | "voice";
+  focusDate?: string;
+};
+
+export type ChatSendResult = {
+  focusDate: string;
+  messages: ChatMessage[];
+  dashboard: DashboardSnapshot;
+  dataSource: DataSource;
+};
+
+export type DashboardFeedbackPayload = {
+  adjustmentId: string;
+  feedback: Exclude<AdjustmentFeedback, null>;
+  focusDate?: string;
 };

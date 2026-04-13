@@ -2,8 +2,58 @@ $ErrorActionPreference = "Stop"
 
 $rootDir = Split-Path -Parent $PSScriptRoot
 $mobileDir = Join-Path $rootDir "mobile"
-$sdkRoot = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { "C:\Users\$env:USERNAME\AppData\Local\Android\Sdk" }
-$javaHome = if ($env:JAVA_HOME) { $env:JAVA_HOME } else { "D:\Program Files\Android\Android Studio\jbr" }
+$androidUserDir = Join-Path $rootDir ".android-user"
+$localAvdDir = Join-Path $androidUserDir "avd"
+$sdkCandidates = @()
+
+if ($env:ANDROID_HOME) {
+  $sdkCandidates += $env:ANDROID_HOME
+}
+
+if ($env:ANDROID_SDK_ROOT) {
+  $sdkCandidates += $env:ANDROID_SDK_ROOT
+}
+
+$sdkCandidates += @(
+  "C:\Users\$env:USERNAME\AppData\Local\Android\Sdk",
+  "C:\Users\NaBr\AppData\Local\Android\Sdk",
+  "D:\Android\Sdk"
+)
+
+if (Test-Path "C:\Users") {
+  $sdkCandidates += Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue |
+    ForEach-Object { Join-Path $_.FullName "AppData\Local\Android\Sdk" }
+}
+
+$sdkRoot = $sdkCandidates |
+  Select-Object -Unique |
+  Where-Object { $_ -and (Test-Path $_) } |
+  Select-Object -First 1
+
+if (-not $sdkRoot) {
+  throw "Android SDK not found. Checked common install locations and environment variables."
+}
+
+$javaCandidates = @()
+
+if ($env:JAVA_HOME) {
+  $javaCandidates += $env:JAVA_HOME
+}
+
+$javaCandidates += @(
+  "D:\Program Files\Android\Android Studio\jbr",
+  "C:\Program Files\Android\Android Studio\jbr"
+)
+
+$javaHome = $javaCandidates |
+  Select-Object -Unique |
+  Where-Object { $_ -and (Test-Path $_) } |
+  Select-Object -First 1
+
+if (-not $javaHome) {
+  throw "Android Studio bundled JBR was not found. Set JAVA_HOME and try again."
+}
+
 $adbPath = Join-Path $sdkRoot "platform-tools\adb.exe"
 $emulatorPath = Join-Path $sdkRoot "emulator\emulator.exe"
 $gradleWrapperPath = Join-Path $mobileDir "android\gradlew.bat"
@@ -12,12 +62,49 @@ $packageName = "com.healthtrack.mobile"
 $metroPort = 8081
 $mobileEnvPath = Join-Path $mobileDir ".env"
 $mobileEnvExamplePath = Join-Path $mobileDir ".env.example"
+$packageJsonPath = Join-Path $mobileDir "package.json"
+$packageLockPath = Join-Path $mobileDir "package-lock.json"
+$debugApkPath = Join-Path $mobileDir "android\app\build\outputs\apk\debug\app-debug.apk"
 $metroOutLog = Join-Path $rootDir ".codex-mobile.out.log"
 $metroErrLog = Join-Path $rootDir ".codex-mobile.err.log"
 
+if (-not (Test-Path $androidUserDir)) {
+  New-Item -ItemType Directory -Path $androidUserDir -Force | Out-Null
+}
+
+$avdHomeCandidates = @()
+
+if ($env:ANDROID_AVD_HOME) {
+  $avdHomeCandidates += $env:ANDROID_AVD_HOME
+}
+
+if (Test-Path "C:\Users") {
+  $avdHomeCandidates += Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue |
+    ForEach-Object { Join-Path $_.FullName ".android\avd" }
+}
+
+$avdHome = $avdHomeCandidates |
+  Select-Object -Unique |
+  Where-Object { $_ -and (Test-Path (Join-Path $_ "$avdName.ini")) } |
+  Select-Object -First 1
+
+if (-not $avdHome) {
+  $avdHome = $localAvdDir
+}
+
+if (-not (Test-Path $avdHome)) {
+  New-Item -ItemType Directory -Path $avdHome -Force | Out-Null
+}
+
 $env:ANDROID_HOME = $sdkRoot
 $env:ANDROID_SDK_ROOT = $sdkRoot
+$env:ANDROID_SDK_HOME = $androidUserDir
+$env:ANDROID_USER_HOME = $androidUserDir
+$env:ANDROID_EMULATOR_HOME = $androidUserDir
+$env:ANDROID_AVD_HOME = $avdHome
 $env:JAVA_HOME = $javaHome
+$env:HOME = $androidUserDir
+$env:USERPROFILE = $androidUserDir
 
 $pathEntries = @(
   (Join-Path $sdkRoot "platform-tools"),
@@ -67,6 +154,34 @@ function Stop-NodeProcessOnPort([int]$Port) {
   }
 }
 
+function Get-LatestNativeDependencyTimestamp {
+  $paths = @($packageJsonPath, $packageLockPath) | Where-Object { Test-Path $_ }
+
+  if (-not $paths) {
+    return $null
+  }
+
+  return ($paths | Get-Item | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
+}
+
+function Should-InstallDebugApp([string]$InstalledPackage) {
+  if (-not ($InstalledPackage | Select-String $packageName)) {
+    return $true
+  }
+
+  if (-not (Test-Path $debugApkPath)) {
+    return $true
+  }
+
+  $latestNativeDependencyChange = Get-LatestNativeDependencyTimestamp
+  if (-not $latestNativeDependencyChange) {
+    return $false
+  }
+
+  $apkTimestamp = (Get-Item $debugApkPath).LastWriteTime
+  return $latestNativeDependencyChange -gt $apkTimestamp
+}
+
 if (-not (Test-Path $mobileEnvPath) -and (Test-Path $mobileEnvExamplePath)) {
   Copy-Item $mobileEnvExamplePath $mobileEnvPath
 }
@@ -92,10 +207,17 @@ if (-not (Test-Path $gradleWrapperPath)) {
   throw "Missing Gradle wrapper at $gradleWrapperPath"
 }
 
+try {
+  & $adbPath kill-server | Out-Null
+} catch {
+}
+
 $connectedDevices = & $adbPath devices | Select-String "^emulator-\d+\s+device$"
 if (-not $connectedDevices) {
   Write-Host "[health-track] Starting Android emulator..." -ForegroundColor Cyan
-  Start-Process -FilePath $emulatorPath -ArgumentList "@$avdName"
+  Write-Host "[health-track] Using emulator home: $env:ANDROID_EMULATOR_HOME" -ForegroundColor DarkGray
+  Write-Host "[health-track] Using AVD home: $env:ANDROID_AVD_HOME" -ForegroundColor DarkGray
+  Start-Process -FilePath $emulatorPath -ArgumentList "-avd", $avdName, "-gpu", "swiftshader_indirect", "-no-snapshot-load"
 
   for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Seconds 5
@@ -113,7 +235,7 @@ if (-not $connectedDevices) {
 Wait-ForEmulator
 
 $installedPackage = & $adbPath shell pm list packages $packageName
-if (-not ($installedPackage | Select-String $packageName)) {
+if (Should-InstallDebugApp -InstalledPackage $installedPackage) {
   Write-Host "[health-track] Installing Android debug app..." -ForegroundColor Cyan
   Push-Location (Join-Path $mobileDir "android")
   try {
