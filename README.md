@@ -1,66 +1,77 @@
-# 基于 Dify 工作流的个性化饮食、运动、个人护理追踪平台 MVP
+# 生命卫士 MVP
 
-这是一个以 Android App 为主的健康管理 MVP monorepo，当前结构聚焦在：
+一个面向健康管理场景的 monorepo。当前重点是 Android 移动端与 Spring Boot 后端联调，产品形态已经从传统日常打卡改为 `Chat-as-Interface`。
 
-- `server/`：Spring Boot 后端接口
-- `mobile/`：Expo + React Native 移动端
+## 当前产品形态
 
-整体目标是先把 App 形态跑通，再逐步补强 AI 建议、用户目标和健康数据沉淀能力。
+- 移动端日常记录入口只有 `AI 交流页`，饮食、运动、睡眠等不再通过表单逐项录入。
+- 首次进入时保留 `初始建档向导`，用于采集疾病标签、基线指标、用药与照护重点。
+- 首页展示压缩后的今日 AI 建议，以及热量、运动时长、血糖趋势等只读指标。
+- 个人页支持编辑昵称、头像和基础健康资料。
+- 支持自定义头像，从系统相册选择后保存到当前设备本地资料。
+- 登录 / 注册 / 本地会话已接通；后端不可用时，移动端会回退到本地离线模式继续演示。
 
-## 技术栈
-
-- 移动端：Expo、React Native、TypeScript
-- 后端：Spring Boot 3、Java 17、Maven
-- 安全：Spring Security、JWT
-- 数据访问：Spring Data JPA
-- 数据库：MySQL 8
-- 缓存预留：Redis
-- AI 工作流：Dify API
-- API 文档：OpenAPI / Swagger
-- 部署：Docker Compose
-
-## 项目结构
+## 目录结构
 
 ```text
 .
-├── .env.example
-├── .gitignore
-├── README.md
-├── docker-compose.yml
-├── scripts
-│   ├── dev-mobile.sh
-│   ├── dev-server.sh
-│   └── dev-setup.sh
-├── mobile
-│   ├── .env.example
-│   ├── app.json
-│   ├── App.tsx
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── src
-│       ├── components
-│       ├── lib
-│       ├── screens
-│       └── types.ts
-└── server
-    ├── Dockerfile
-    ├── mvnw
-    ├── pom.xml
-    └── src
+├─ mobile/      Expo + React Native + TypeScript 移动端
+├─ server/      Spring Boot 后端
+├─ web/         Web 侧原型目录
+├─ scripts/     常用启动脚本
+├─ docker-compose.yml
+└─ README.md
 ```
 
-## 当前 MVP 功能
+## 技术栈
 
-- 用户注册 / 登录 / JWT 鉴权
-- 用户资料与健康目标维护
-- 饮食记录、运动记录、护理记录的新增与按日期查询
-- 仪表盘汇总与近 7 天趋势展示
-- Dify AI 建议接口骨架与建议日志留存
-- 后端不可用时的 mock 回退演示
+### Mobile
+
+- Expo 55
+- React Native 0.83
+- TypeScript
+- React Navigation
+- `expo-image-picker`
+- `react-native-svg`
+- `@expo/vector-icons`
+
+### Server
+
+- Spring Boot 3
+- Java 17
+- Spring Security + JWT
+- Spring Data JPA
+- MySQL 8
+- Redis
+- Dify API
+
+## 当前移动端能力
+
+- `Onboarding Wizard`
+  - 首次建档
+  - 编辑昵称、头像、疾病标签、目标、基线指标、用药与备注
+- `Dashboard`
+  - 今日 AI 建议摘要卡
+  - 环形进度与血糖趋势可视化
+  - 点击进入二级详情页查看完整建议
+- `AI Chat`
+  - 唯一日常输入入口
+  - 文本发送可用
+  - 语音按钮已预留入口，后续可接录音与转写
+- `Profile`
+  - 头像、昵称、基础信息展示与编辑
+  - 最近 7 日统计概览
+  - 登录同步入口
+
+## 已知限制
+
+- 自定义头像目前保存在移动端本地资料中，后端暂未提供头像上传与跨设备同步字段。
+- 当后端接口不可用时，移动端会自动回退到本地离线数据。
+- `web/` 目录不是当前主交付面，主要交付仍是 Android App。
 
 ## 环境变量
 
-根目录 `.env.example` 用于后端与 Docker：
+根目录 `.env.example` 用于后端和 Docker Compose：
 
 - `MYSQL_HOST`
 - `MYSQL_PORT`
@@ -87,24 +98,29 @@
 
 ## 本地启动
 
-### 1. 准备根目录环境变量
+### 1. 准备环境变量
 
 ```bash
 cp .env.example .env
+cp mobile/.env.example mobile/.env
 ```
 
-### 2. 启动 MySQL / Redis
-
-如果本机装了 Docker：
+### 2. 启动数据库与缓存
 
 ```bash
 docker compose up -d mysql redis
 ```
 
-或者直接使用：
+或使用脚本：
 
 ```bash
 ./scripts/dev-setup.sh
+```
+
+Windows PowerShell 可使用：
+
+```powershell
+.\scripts\dev-all.ps1
 ```
 
 ### 3. 启动后端
@@ -114,119 +130,87 @@ cd server
 ./mvnw spring-boot:run
 ```
 
-或使用脚本：
+Windows PowerShell：
 
-```bash
-./scripts/dev-server.sh
-```
-
-默认端口：`8080`
-
-Swagger：
-
-- `http://localhost:8080/swagger-ui.html`
-
-如果你只想做本地轻量联调，也可以用 H2 profile：
-
-```bash
+```powershell
 cd server
-SPRING_PROFILES_ACTIVE=local ./mvnw spring-boot:run
+.\mvnw.cmd spring-boot:run
 ```
 
 ### 4. 启动移动端
 
-先复制移动端环境变量：
-
 ```bash
 cd mobile
-cp .env.example .env
-```
-
-然后启动：
-
-```bash
 npm install
 npm run android
 ```
 
-或使用根目录脚本：
+如果已经生成原生工程并使用 dev client，也可以：
 
 ```bash
-./scripts/dev-mobile.sh
+cd mobile
+npm run start:dev-client
 ```
 
-## Docker 启动
+## Docker Compose
 
-当前 `docker-compose.yml` 负责启动：
+当前 `docker-compose.yml` 会启动：
 
 - MySQL
 - Redis
 - Server
 
-执行方式：
+启动方式：
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-启动后默认访问：
+默认后端地址：
 
-- 后端：`http://localhost:8080`
-- Swagger：`http://localhost:8080/swagger-ui.html`
+- `http://localhost:8080`
 
-移动端仍建议本机通过 Expo 启动。
+## Android APK 打包
 
-## ER 图
+### 通用 Release APK
 
-```mermaid
-erDiagram
-    users ||--|| user_profiles : has
-    users ||--o{ diet_records : owns
-    users ||--o{ exercise_records : owns
-    users ||--o{ care_records : owns
-    users ||--o{ ai_advice_logs : owns
+```powershell
+cd mobile\android
+.\gradlew.bat assembleRelease
 ```
 
-## 当前状态
+输出文件：
 
-已完成：
+```text
+mobile/android/app/build/outputs/apk/release/app-release.apk
+```
 
-- `mobile/` Android MVP 客户端骨架
-- 登录 / 注册
-- 仪表盘、饮食、运动、护理、AI 建议页面
-- 本地会话存储
-- 对接现有 Spring Boot API
-- TypeScript 检查通过
-- Expo Android bundle 导出验证通过
+### 瘦身版 Release APK
 
-说明：
+推荐只打 `arm64-v8a`，并开启混淆与资源压缩：
 
-- 当前环境下 Hermes bytecode 导出会遇到系统级 `EPERM`，所以本仓库里的验证使用了 `--no-bytecode`
-- 这不影响你继续在本机模拟器或真机上做开发联调
+```powershell
+cd mobile\android
+.\gradlew.bat assembleRelease '-PreactNativeArchitectures=arm64-v8a' '-Pandroid.enableMinifyInReleaseBuilds=true' '-Pandroid.enableShrinkResourcesInReleaseBuilds=true'
+```
 
-## 后续建议
+当前项目实测：
 
-### V1
+- 通用 APK 约 `77 MB`
+- 瘦身后的 arm64 APK 约 `25 MB`
 
-- 把 `mobile/` 的类型、mock、API DTO 继续抽成共享层
-- 补表单校验、错误提示、空状态和加载态细化
-- 增加更适合移动端的图表与趋势卡片
+## 常用脚本
 
-### V2
+- `scripts/dev-mobile.sh`
+- `scripts/dev-mobile.ps1`
+- `scripts/dev-server.sh`
+- `scripts/dev-server.ps1`
+- `scripts/dev-all.ps1`
 
-- 接入真实 Dify Workflow Prompt 编排
-- 引入 Redis 缓存、异步任务、消息通知
-- 增加推送与每日提醒
+## 当前开发重点
 
-### V3
-
-- 增加家庭成员、多角色、多设备数据同步
-- 增加 AI Coach、趋势分析、干预提醒
-
-## 项目亮点
-
-- 纯 App 导向的 monorepo，结构比原先更聚焦
-- 后端接口和移动端节奏可以并行推进
-- 支持 mock + API 混合开发，适合 MVP 快速验证
-- Dify 接口已预留，后续可快速接入真实 AI 能力
+- 完善移动端与后端的真实接口映射
+- 接入语音录音与转写
+- 补齐头像等资料字段的后端同步
+- 继续优化医疗风格视觉与适老化体验
