@@ -20,4 +20,8 @@
 /mobile/android/local.properties
 /server/.mvn/dist/
 /server/data/
+/emulator-*.png
+/view.xml
+/mobile/.codex-metro*.log
+/mobile/window_dump*.xml
 

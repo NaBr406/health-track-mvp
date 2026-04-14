@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import * as ImagePicker from "expo-image-picker";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -107,6 +106,7 @@ export function OnboardingWizardScreen({
     setPickingAvatar(true);
 
     try {
+      const ImagePicker = await import("expo-image-picker");
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
       if (!permission.granted) {
@@ -135,7 +135,7 @@ export function OnboardingWizardScreen({
         avatarUri: customAvatarUri
       }));
     } catch {
-      Alert.alert("头像更新失败", "这次没有成功读取图片，请稍后再试一次。");
+      Alert.alert("头像更新失败", "当前环境暂时不可用相册选择，或这次没有成功读取图片，请稍后再试一次。");
     } finally {
       setPickingAvatar(false);
     }
