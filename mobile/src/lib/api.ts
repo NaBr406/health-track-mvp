@@ -37,6 +37,12 @@ type RegisterPayload = {
 type ServerProfileResponse = {
   email?: string | null;
   nickname?: string | null;
+  conditionLabel?: string | null;
+  fastingGlucoseBaseline?: string | null;
+  bloodPressureBaseline?: string | null;
+  restingHeartRate?: number | null;
+  medicationPlan?: string | null;
+  notes?: string | null;
   age?: number | null;
   gender?: string | null;
   heightCm?: number | null;
@@ -154,6 +160,14 @@ export const api = {
         nickname: remote.nickname ?? stored?.nickname ?? mockHealthProfile.nickname,
         avatarPresetId: stored?.avatarPresetId ?? mockHealthProfile.avatarPresetId,
         avatarUri: stored?.avatarUri ?? mockHealthProfile.avatarUri,
+        conditionLabel: remote.conditionLabel ?? stored?.conditionLabel ?? mockHealthProfile.conditionLabel,
+        fastingGlucoseBaseline:
+          remote.fastingGlucoseBaseline ?? stored?.fastingGlucoseBaseline ?? mockHealthProfile.fastingGlucoseBaseline,
+        bloodPressureBaseline:
+          remote.bloodPressureBaseline ?? stored?.bloodPressureBaseline ?? mockHealthProfile.bloodPressureBaseline,
+        restingHeartRate: remote.restingHeartRate ?? stored?.restingHeartRate ?? mockHealthProfile.restingHeartRate,
+        medicationPlan: remote.medicationPlan ?? stored?.medicationPlan ?? mockHealthProfile.medicationPlan,
+        notes: remote.notes ?? stored?.notes ?? mockHealthProfile.notes,
         age: remote.age ?? stored?.age ?? mockHealthProfile.age,
         biologicalSex: remote.gender ?? stored?.biologicalSex ?? mockHealthProfile.biologicalSex,
         heightCm: remote.heightCm ?? stored?.heightCm ?? mockHealthProfile.heightCm,
@@ -190,6 +204,12 @@ export const api = {
         method: "PUT",
         body: JSON.stringify({
           nickname: payload.nickname,
+          conditionLabel: payload.conditionLabel,
+          fastingGlucoseBaseline: payload.fastingGlucoseBaseline,
+          bloodPressureBaseline: payload.bloodPressureBaseline,
+          restingHeartRate: payload.restingHeartRate,
+          medicationPlan: payload.medicationPlan,
+          notes: payload.notes,
           age: payload.age,
           gender: payload.biologicalSex,
           heightCm: payload.heightCm,
@@ -206,6 +226,12 @@ export const api = {
         nickname: remote.nickname ?? localProfile.nickname,
         avatarPresetId: localProfile.avatarPresetId,
         avatarUri: localProfile.avatarUri,
+        conditionLabel: remote.conditionLabel ?? localProfile.conditionLabel,
+        fastingGlucoseBaseline: remote.fastingGlucoseBaseline ?? localProfile.fastingGlucoseBaseline,
+        bloodPressureBaseline: remote.bloodPressureBaseline ?? localProfile.bloodPressureBaseline,
+        restingHeartRate: remote.restingHeartRate ?? localProfile.restingHeartRate,
+        medicationPlan: remote.medicationPlan ?? localProfile.medicationPlan,
+        notes: remote.notes ?? localProfile.notes,
         age: remote.age ?? localProfile.age,
         biologicalSex: remote.gender ?? localProfile.biologicalSex,
         heightCm: remote.heightCm ?? localProfile.heightCm,

@@ -55,6 +55,23 @@ public class UserProfile {
     @Column(length = 255)
     private String healthGoal;
 
+    @Column(length = 120)
+    private String conditionLabel;
+
+    @Column(length = 120)
+    private String fastingGlucoseBaseline;
+
+    @Column(length = 60)
+    private String bloodPressureBaseline;
+
+    private Integer restingHeartRate;
+
+    @Column(length = 255)
+    private String medicationPlan;
+
+    @Column(length = 1000)
+    private String notes;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

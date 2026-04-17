@@ -147,7 +147,7 @@ public class InteractionService {
         AdjustmentModel adjustment = resolveAdjustment(glucose, steps, sleepHours, calorieGap, advice, feedback, dayState);
 
         List<DashboardMetricResponse> metrics = List.of(
-                new DashboardMetricResponse("glucose", "血糖", formatDecimal(glucose), "mmol/L", resolveGlucoseMetricDescriptor(dayState), resolveGlucoseMetricSource(dayState)),
+                new DashboardMetricResponse("glucose", "血糖", formatDecimal(glucose), "mmol/L", resolveGlucoseMetricDescriptor(dayState, recordedGlucose), resolveGlucoseMetricSource(dayState, recordedGlucose)),
                 new DashboardMetricResponse("calories", "热量", String.valueOf(safeInt(summary.totalCalories())), "kcal", "今日总摄入", "后端归档"),
                 new DashboardMetricResponse("exercise", "运动", String.valueOf(safeInt(summary.totalExerciseMinutes())), "min", "主动训练时长", "后端归档"),
                 new DashboardMetricResponse("steps", "步数", String.valueOf(steps), "步", "低强度活动", dayState.steps() != null ? "对话解析" : "运动时长推算"),
@@ -481,7 +481,10 @@ public class InteractionService {
         return DEFAULT_GLUCOSE;
     }
 
-    private String resolveGlucoseMetricDescriptor(DayState dayState) {
+    private String resolveGlucoseMetricDescriptor(DayState dayState, Double recordedGlucose) {
+        if (recordedGlucose != null) {
+            return "今日实测血糖";
+        }
         if (dayState.glucoseMmol() != null) {
             return "今日实测血糖";
         }
@@ -491,7 +494,10 @@ public class InteractionService {
         return "暂无实时回传，先展示默认基线";
     }
 
-    private String resolveGlucoseMetricSource(DayState dayState) {
+    private String resolveGlucoseMetricSource(DayState dayState, Double recordedGlucose) {
+        if (recordedGlucose != null) {
+            return "后端归档";
+        }
         if (dayState.glucoseMmol() != null) {
             return "对话解析";
         }

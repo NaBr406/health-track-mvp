@@ -59,6 +59,12 @@ public class SeedDataInitializer implements ApplicationRunner {
         profile.setTargetWeightKg(new BigDecimal("55.0"));
         profile.setDailyCalorieGoal(1800);
         profile.setWeeklyExerciseGoalMinutes(180);
+        profile.setConditionLabel("type-2-diabetes");
+        profile.setFastingGlucoseBaseline("7.2 mmol/L");
+        profile.setBloodPressureBaseline("128/82 mmHg");
+        profile.setRestingHeartRate(74);
+        profile.setMedicationPlan("metformin 0.5g bid");
+        profile.setNotes("High-GI meals need extra postprandial monitoring.");
         profile.setCareFocus("睡眠与基础皮肤护理");
         profile.setHealthGoal("减脂并提升精力状态");
         userProfileRepository.save(profile);

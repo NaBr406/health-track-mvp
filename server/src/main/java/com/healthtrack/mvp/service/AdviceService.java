@@ -169,6 +169,12 @@ public class AdviceService {
         }
 
         Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("conditionLabel", profile.getConditionLabel());
+        payload.put("fastingGlucoseBaseline", profile.getFastingGlucoseBaseline());
+        payload.put("bloodPressureBaseline", profile.getBloodPressureBaseline());
+        payload.put("restingHeartRate", profile.getRestingHeartRate());
+        payload.put("medicationPlan", profile.getMedicationPlan());
+        payload.put("notes", profile.getNotes());
         payload.put("healthGoal", profile.getHealthGoal());
         payload.put("dailyCalorieGoal", profile.getDailyCalorieGoal());
         payload.put("weeklyExerciseGoalMinutes", profile.getWeeklyExerciseGoalMinutes());

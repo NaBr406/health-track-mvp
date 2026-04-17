@@ -10,6 +10,12 @@ public final class ProfileDtos {
 
     public record ProfileRequest(
             String nickname,
+            String conditionLabel,
+            String fastingGlucoseBaseline,
+            String bloodPressureBaseline,
+            Integer restingHeartRate,
+            String medicationPlan,
+            String notes,
             Integer age,
             String gender,
             BigDecimal heightCm,
@@ -25,6 +31,12 @@ public final class ProfileDtos {
     public record ProfileResponse(
             String email,
             String nickname,
+            String conditionLabel,
+            String fastingGlucoseBaseline,
+            String bloodPressureBaseline,
+            Integer restingHeartRate,
+            String medicationPlan,
+            String notes,
             Integer age,
             String gender,
             BigDecimal heightCm,

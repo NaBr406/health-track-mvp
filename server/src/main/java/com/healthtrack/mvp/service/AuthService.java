@@ -40,6 +40,7 @@ public class AuthService {
 
         UserProfile profile = new UserProfile();
         profile.setUser(user);
+        profile.setConditionLabel("condition-pending");
         profile.setHealthGoal("建立可持续的饮食、运动、护理习惯");
         profile.setCareFocus("睡眠与皮肤基础护理");
         userProfileRepository.save(profile);

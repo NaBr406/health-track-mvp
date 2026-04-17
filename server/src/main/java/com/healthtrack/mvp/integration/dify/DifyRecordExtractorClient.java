@@ -181,6 +181,12 @@ public class DifyRecordExtractorClient {
     private Map<String, Object> writeUserProfile(UserProfile profile) {
         Map<String, Object> payload = new LinkedHashMap<>();
         if (profile != null) {
+            payload.put("conditionLabel", profile.getConditionLabel());
+            payload.put("fastingGlucoseBaseline", profile.getFastingGlucoseBaseline());
+            payload.put("bloodPressureBaseline", profile.getBloodPressureBaseline());
+            payload.put("restingHeartRate", profile.getRestingHeartRate());
+            payload.put("medicationPlan", profile.getMedicationPlan());
+            payload.put("notes", profile.getNotes());
             payload.put("age", profile.getAge());
             payload.put("gender", profile.getGender());
             payload.put("heightCm", toDouble(profile.getHeightCm()));

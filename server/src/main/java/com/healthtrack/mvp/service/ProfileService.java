@@ -35,6 +35,24 @@ public class ProfileService {
         if (StringUtils.hasText(request.nickname())) {
             user.setNickname(request.nickname().trim());
         }
+        if (StringUtils.hasText(request.conditionLabel())) {
+            profile.setConditionLabel(request.conditionLabel().trim());
+        }
+        if (StringUtils.hasText(request.fastingGlucoseBaseline())) {
+            profile.setFastingGlucoseBaseline(request.fastingGlucoseBaseline().trim());
+        }
+        if (StringUtils.hasText(request.bloodPressureBaseline())) {
+            profile.setBloodPressureBaseline(request.bloodPressureBaseline().trim());
+        }
+        if (request.restingHeartRate() != null) {
+            profile.setRestingHeartRate(request.restingHeartRate());
+        }
+        if (StringUtils.hasText(request.medicationPlan())) {
+            profile.setMedicationPlan(request.medicationPlan().trim());
+        }
+        if (StringUtils.hasText(request.notes())) {
+            profile.setNotes(request.notes().trim());
+        }
         if (request.age() != null) {
             profile.setAge(request.age());
         }
@@ -78,6 +96,7 @@ public class ProfileService {
                 .orElseGet(() -> {
                     UserProfile profile = new UserProfile();
                     profile.setUser(user);
+                    profile.setConditionLabel("condition-pending");
                     profile.setHealthGoal("建立长期健康习惯");
                     return userProfileRepository.save(profile);
                 });
@@ -87,6 +106,12 @@ public class ProfileService {
         return new ProfileResponse(
                 user.getEmail(),
                 user.getNickname(),
+                profile.getConditionLabel(),
+                profile.getFastingGlucoseBaseline(),
+                profile.getBloodPressureBaseline(),
+                profile.getRestingHeartRate(),
+                profile.getMedicationPlan(),
+                profile.getNotes(),
                 profile.getAge(),
                 profile.getGender(),
                 profile.getHeightCm(),
