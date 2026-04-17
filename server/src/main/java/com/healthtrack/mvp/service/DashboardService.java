@@ -15,16 +15,24 @@ import com.healthtrack.mvp.repository.UserProfileRepository;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.IntStream;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
 public class DashboardService {
+
+    private static final Pattern CONTEXTUAL_GLUCOSE_PATTERN =
+            Pattern.compile("(?i)(?:glucose|\\u8840\\u7cd6)[^\\d]*(\\d+(?:\\.\\d+)?)");
+    private static final Pattern DECIMAL_PATTERN = Pattern.compile("(\\d+(?:\\.\\d+)?)");
 
     private final UserProfileRepository userProfileRepository;
     private final DietRecordRepository dietRecordRepository;
@@ -48,10 +56,17 @@ public class DashboardService {
         Map<LocalDate, Integer> caloriesByDate = new HashMap<>();
         Map<LocalDate, Integer> exerciseByDate = new HashMap<>();
         Map<LocalDate, Integer> careByDate = new HashMap<>();
+        Map<LocalDate, Double> glucoseByDate = new HashMap<>();
 
         diets.forEach(record -> caloriesByDate.merge(record.getRecordedOn(), safeInt(record.getCalories()), Integer::sum));
         exercises.forEach(record -> exerciseByDate.merge(record.getRecordedOn(), safeInt(record.getDurationMinutes()), Integer::sum));
         cares.forEach(record -> careByDate.merge(record.getRecordedOn(), safeInt(record.getDurationMinutes()), Integer::sum));
+        cares.forEach(record -> {
+            Double glucose = resolveGlucoseReading(record);
+            if (glucose != null) {
+                glucoseByDate.putIfAbsent(record.getRecordedOn(), glucose);
+            }
+        });
 
         int focusDietCount = (int) diets.stream().filter(record -> focusDate.equals(record.getRecordedOn())).count();
         int focusExerciseCount = (int) exercises.stream().filter(record -> focusDate.equals(record.getRecordedOn())).count();
@@ -59,7 +74,11 @@ public class DashboardService {
         int focusCalories = caloriesByDate.getOrDefault(focusDate, 0);
         int focusExerciseMinutes = exerciseByDate.getOrDefault(focusDate, 0);
         int focusCareMinutes = careByDate.getOrDefault(focusDate, 0);
-        int weeklyExerciseMinutes = exercises.stream().map(ExerciseRecord::getDurationMinutes).filter(Objects::nonNull).mapToInt(Integer::intValue).sum();
+        int weeklyExerciseMinutes = exercises.stream()
+                .map(ExerciseRecord::getDurationMinutes)
+                .filter(Objects::nonNull)
+                .mapToInt(Integer::intValue)
+                .sum();
 
         int dailyCalorieGoal = profile != null && profile.getDailyCalorieGoal() != null ? profile.getDailyCalorieGoal() : 2000;
         int weeklyExerciseGoalMinutes = profile != null && profile.getWeeklyExerciseGoalMinutes() != null
@@ -73,7 +92,8 @@ public class DashboardService {
                             currentDate,
                             caloriesByDate.getOrDefault(currentDate, 0),
                             exerciseByDate.getOrDefault(currentDate, 0),
-                            careByDate.getOrDefault(currentDate, 0)
+                            careByDate.getOrDefault(currentDate, 0),
+                            glucoseByDate.get(currentDate)
                     );
                 })
                 .toList();
@@ -116,5 +136,44 @@ public class DashboardService {
     private int safeInt(Integer value) {
         return value == null ? 0 : value;
     }
-}
 
+    private Double resolveGlucoseReading(CareRecord record) {
+        if (record.getGlucoseMmol() != null) {
+            return record.getGlucoseMmol();
+        }
+
+        if (!looksLikeGlucoseRecord(record) || !StringUtils.hasText(record.getNote())) {
+            return null;
+        }
+
+        Matcher contextualMatcher = CONTEXTUAL_GLUCOSE_PATTERN.matcher(record.getNote());
+        if (contextualMatcher.find()) {
+            return Double.parseDouble(contextualMatcher.group(1));
+        }
+
+        Matcher decimalMatcher = DECIMAL_PATTERN.matcher(record.getNote());
+        while (decimalMatcher.find()) {
+            double candidate = Double.parseDouble(decimalMatcher.group(1));
+            if (candidate >= 2d && candidate <= 25d) {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private boolean looksLikeGlucoseRecord(CareRecord record) {
+        return containsGlucoseKeyword(record.getCategory())
+                || containsGlucoseKeyword(record.getItemName())
+                || containsGlucoseKeyword(record.getNote());
+    }
+
+    private boolean containsGlucoseKeyword(String value) {
+        if (!StringUtils.hasText(value)) {
+            return false;
+        }
+
+        String normalized = value.toLowerCase(Locale.ROOT);
+        return normalized.contains("\u8840\u7cd6") || normalized.contains("glucose");
+    }
+}

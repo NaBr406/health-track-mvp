@@ -67,6 +67,7 @@ export function ProfileScreen({
     }
 
     const history = snapshot.history;
+    const recordedGlucose = history.filter((item) => item.glucoseSource === "recorded").map((item) => item.glucoseMmol);
 
     return [
       {
@@ -81,7 +82,7 @@ export function ProfileScreen({
       },
       {
         label: "7 日平均血糖",
-        value: `${average(history.map((item) => item.glucoseMmol)).toFixed(1)}`,
+        value: recordedGlucose.length > 0 ? `${average(recordedGlucose).toFixed(1)}` : "--",
         unit: "mmol/L"
       },
       {

@@ -10,12 +10,14 @@ import com.healthtrack.mvp.dto.DashboardDtos.AdjustmentFeedbackRequest;
 import com.healthtrack.mvp.dto.DashboardDtos.DashboardMetricResponse;
 import com.healthtrack.mvp.dto.DashboardDtos.DashboardSnapshotResponse;
 import com.healthtrack.mvp.dto.DashboardDtos.DashboardSummaryResponse;
+import com.healthtrack.mvp.dto.DashboardDtos.GlucoseForecastPointResponse;
 import com.healthtrack.mvp.dto.DashboardDtos.MonitoringHistoryPointResponse;
 import com.healthtrack.mvp.dto.DashboardDtos.PlanAdjustmentResponse;
 import com.healthtrack.mvp.dto.InteractionDtos.ChatMessageResponse;
 import com.healthtrack.mvp.dto.InteractionDtos.ChatThreadResponse;
 import com.healthtrack.mvp.dto.InteractionDtos.InteractionMessageRequest;
 import com.healthtrack.mvp.dto.InteractionDtos.InteractionMessageResponse;
+import com.healthtrack.mvp.integration.dify.DifyRecordExtractorClient;
 import com.healthtrack.mvp.repository.CareRecordRepository;
 import com.healthtrack.mvp.repository.DietRecordRepository;
 import com.healthtrack.mvp.repository.ExerciseRecordRepository;
@@ -35,6 +37,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
@@ -52,6 +55,7 @@ public class InteractionService {
     private final CareRecordRepository careRecordRepository;
     private final DashboardService dashboardService;
     private final AdviceService adviceService;
+    private final DifyRecordExtractorClient difyRecordExtractorClient;
 
     private final Map<String, CopyOnWriteArrayList<ChatMessageResponse>> threadStore = new ConcurrentHashMap<>();
     private final Map<String, DayState> dayStateStore = new ConcurrentHashMap<>();
@@ -76,25 +80,31 @@ public class InteractionService {
         CopyOnWriteArrayList<ChatMessageResponse> thread = ensureThread(userId, focusDate);
         thread.add(newMessage("user", message));
 
-        ParsedInteraction parsed = parseMessage(message);
+        ParsedInteraction parsed = parseMessage(userId, message);
         List<String> changes = persistInteraction(userId, focusDate, message, inputMode, parsed);
         adviceService.refreshDailyAdvice(userId, focusDate);
         DashboardSnapshotResponse snapshot = getDashboardSnapshot(userId, focusDate);
 
-        String responseText =
-                changes.isEmpty()
-                        ? "已收到这条%s描述，后端已归档原始事件。当前微调保持为 %s。".formatted("voice".equals(inputMode) ? "语音" : "文本", snapshot.adjustment().title())
-                        : "已写入后端归档：%s。新的微调为 %s，%s %s。%s"
-                                .formatted(
-                                        String.join("，", changes),
-                                        snapshot.adjustment().title(),
-                                        snapshot.adjustment().parameterLabel(),
-                                        snapshot.adjustment().parameterDelta(),
-                                        snapshot.adjustment().summary()
-                                );
+        String responseText;
+        if (changes.isEmpty()) {
+            responseText = "已收到这条%s描述，原始事件已经归档，当前建议仍为%s。"
+                    .formatted("voice".equals(inputMode) ? "语音" : "文本", snapshot.adjustment().title());
+        } else {
+            responseText = "已写入后端归档：%s。当前建议更新为%s，%s %s。%s"
+                    .formatted(
+                            String.join("、", changes),
+                            snapshot.adjustment().title(),
+                            snapshot.adjustment().parameterLabel(),
+                            snapshot.adjustment().parameterDelta(),
+                            snapshot.adjustment().summary()
+                    );
+        }
+
+        if (Boolean.TRUE.equals(parsed.needsFollowup()) && StringUtils.hasText(parsed.followupQuestion())) {
+            responseText = responseText + " " + parsed.followupQuestion();
+        }
 
         thread.add(newMessage("assistant", responseText));
-
         return new InteractionMessageResponse(focusDate, List.copyOf(thread), snapshot, DATA_SOURCE);
     }
 
@@ -108,8 +118,8 @@ public class InteractionService {
                 newMessage(
                         "system",
                         "accept".equals(feedback)
-                                ? "已记录“认可”。这条反馈已送往后端校准占位链路。"
-                                : "已记录“不太合适”。这条反馈已送往后端校准占位链路。"
+                                ? "已记录“认可”。这条反馈会用于下一轮建议校准。"
+                                : "已记录“不太合适”。这条反馈会用于下一轮建议校准。"
                 )
         );
 
@@ -122,100 +132,75 @@ public class InteractionService {
         DailyAdviceResponse advice = adviceService.getDailyAdvice(userId, date);
         UserProfile profile = userProfileRepository.findByUserId(userId).orElse(null);
         DayState dayState = dayStateStore.computeIfAbsent(dayKey(userId, date), ignored -> new DayState());
+        Double recordedGlucose = summary.weeklyActivity().stream()
+                .filter(point -> Objects.equals(point.date(), date))
+                .map(point -> point.glucoseMmol())
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
 
-        double glucose = dayState.glucoseMmol() != null ? dayState.glucoseMmol() : DEFAULT_GLUCOSE;
+        double glucose = resolveDashboardGlucose(dayState, recordedGlucose);
         int steps = dayState.steps() != null ? dayState.steps() : Math.max(0, safeInt(summary.totalExerciseMinutes()) * 180);
         double sleepHours = dayState.sleepHours() != null ? dayState.sleepHours() : DEFAULT_SLEEP_HOURS;
         int calorieGap = Math.max(safeInt(summary.totalCalories()) - safeInt(summary.dailyCalorieGoal()), 0);
         String feedback = feedbackStore.get(dayKey(userId, date));
-        AdjustmentModel adjustment = resolveAdjustment(glucose, steps, sleepHours, calorieGap, summary, advice, feedback);
+        AdjustmentModel adjustment = resolveAdjustment(glucose, steps, sleepHours, calorieGap, advice, feedback, dayState);
 
         List<DashboardMetricResponse> metrics = List.of(
-                new DashboardMetricResponse(
-                        "glucose",
-                        "血糖",
-                        formatDecimal(glucose),
-                        "mmol/L",
-                        dayState.glucoseMmol() != null ? "今日对话监测" : "暂无实时回传，先展示默认基线",
-                        dayState.glucoseMmol() != null ? "对话解析" : "默认基线"
-                ),
-                new DashboardMetricResponse(
-                        "calories",
-                        "热量",
-                        String.valueOf(safeInt(summary.totalCalories())),
-                        "kcal",
-                        "今日总摄入",
-                        "后端归档"
-                ),
-                new DashboardMetricResponse(
-                        "exercise",
-                        "运动",
-                        String.valueOf(safeInt(summary.totalExerciseMinutes())),
-                        "min",
-                        "主动训练时长",
-                        "后端归档"
-                ),
-                new DashboardMetricResponse(
-                        "steps",
-                        "步数",
-                        String.valueOf(steps),
-                        "步",
-                        "低强度活动",
-                        dayState.steps() != null ? "对话解析" : "运动时长推算"
-                ),
-                new DashboardMetricResponse(
-                        "sleep",
-                        "睡眠",
-                        formatDecimal(sleepHours),
-                        "h",
-                        "恢复窗口",
-                        dayState.sleepHours() != null ? "对话解析" : "默认回填"
-                ),
-                new DashboardMetricResponse(
-                        "completion",
-                        "完成度",
-                        String.valueOf(safeInt(summary.goalCompletionRate())),
-                        "%",
-                        "综合执行估测",
-                        "推演引擎"
-                )
+                new DashboardMetricResponse("glucose", "血糖", formatDecimal(glucose), "mmol/L", resolveGlucoseMetricDescriptor(dayState), resolveGlucoseMetricSource(dayState)),
+                new DashboardMetricResponse("calories", "热量", String.valueOf(safeInt(summary.totalCalories())), "kcal", "今日总摄入", "后端归档"),
+                new DashboardMetricResponse("exercise", "运动", String.valueOf(safeInt(summary.totalExerciseMinutes())), "min", "主动训练时长", "后端归档"),
+                new DashboardMetricResponse("steps", "步数", String.valueOf(steps), "步", "低强度活动", dayState.steps() != null ? "对话解析" : "运动时长推算"),
+                new DashboardMetricResponse("sleep", "睡眠", formatDecimal(sleepHours), "h", "恢复窗口", dayState.sleepHours() != null ? "对话解析" : "默认回填"),
+                new DashboardMetricResponse("completion", "完成度", String.valueOf(safeInt(summary.goalCompletionRate())), "%", "综合执行估计", "推演引擎")
         );
 
         List<MonitoringHistoryPointResponse> history = summary.weeklyActivity().stream()
                 .map(point -> {
                     boolean focusPoint = Objects.equals(point.date(), date);
+                    Double historyGlucose = point.glucoseMmol();
+                    String glucoseSource = historyGlucose != null ? "recorded" : "default";
+
+                    if (focusPoint && historyGlucose == null && (dayState.glucoseMmol() != null || dayState.forecastAnchorGlucoseMmol() != null)) {
+                        historyGlucose = glucose;
+                        glucoseSource = "derived";
+                    }
+
                     return new MonitoringHistoryPointResponse(
                             point.date(),
                             safeInt(point.calories()),
                             safeInt(point.exerciseMinutes()),
                             focusPoint && dayState.steps() != null ? dayState.steps() : Math.max(0, safeInt(point.exerciseMinutes()) * 180),
                             focusPoint && dayState.sleepHours() != null ? dayState.sleepHours() : DEFAULT_SLEEP_HOURS,
-                            focusPoint && dayState.glucoseMmol() != null ? dayState.glucoseMmol() : DEFAULT_GLUCOSE
+                            historyGlucose != null ? historyGlucose : DEFAULT_GLUCOSE,
+                            glucoseSource
                     );
                 })
                 .toList();
 
-        String headline = profile != null && profile.getHealthGoal() != null
+        List<GlucoseForecastPointResponse> glucoseForecast = dayState.glucoseForecast8h().stream()
+                .map(point -> new GlucoseForecastPointResponse(point.hourOffset(), point.predictedGlucoseMmol(), point.pointType()))
+                .toList();
+
+        String headline = profile != null && StringUtils.hasText(profile.getHealthGoal())
                 ? "今日方案围绕“%s”展开，系统会根据你的对话归档持续微调。".formatted(profile.getHealthGoal())
-                : "今日方案已根据后端归档和推演结果完成更新。";
+                : "今日方案已根据后端归档和模型推演完成更新。";
 
         return new DashboardSnapshotResponse(
                 date,
                 headline,
-                new PlanAdjustmentResponse(
-                        "adjustment-" + date,
-                        adjustment.title(),
-                        advice.adviceText(),
-                        adjustment.parameterLabel(),
-                        adjustment.parameterDelta(),
-                        adjustment.rationale(),
-                        advice.generatedAt(),
-                        feedback
-                ),
+                new PlanAdjustmentResponse("adjustment-" + date, adjustment.title(), advice.adviceText(), adjustment.parameterLabel(), adjustment.parameterDelta(), adjustment.rationale(), advice.generatedAt(), feedback),
                 metrics,
                 adjustment.observation(),
                 advice.generatedAt(),
                 history,
+                dayState.glucoseRiskLevel(),
+                dayState.calibrationApplied(),
+                dayState.peakGlucoseMmol(),
+                dayState.peakHourOffset(),
+                dayState.returnToBaselineHourOffset(),
+                glucoseForecast,
+                dayState.forecastSource(),
                 DATA_SOURCE
         );
     }
@@ -254,8 +239,8 @@ public class InteractionService {
             DietRecord record = new DietRecord();
             record.setUser(user);
             record.setRecordedOn(focusDate);
-            record.setMealType(inferMealType(message));
-            record.setFoodName(inferFoodName(message));
+            record.setMealType(resolveMealType(parsed, message));
+            record.setFoodName(resolveFoodName(parsed, message));
             record.setCalories(parsed.calories());
             record.setNote(trimToLength(message, 300));
             dietRecordRepository.save(record);
@@ -272,7 +257,7 @@ public class InteractionService {
             ExerciseRecord record = new ExerciseRecord();
             record.setUser(user);
             record.setRecordedOn(focusDate);
-            record.setActivityName(inferActivityName(message, parsed.steps()));
+            record.setActivityName(resolveActivityName(parsed, message, parsed.steps()));
             record.setDurationMinutes(exerciseMinutes);
             record.setCaloriesBurned(Math.max(0, exerciseMinutes * 4));
             record.setIntensity(parsed.steps() != null && parsed.exerciseMinutes() == null ? "低" : "中");
@@ -287,6 +272,23 @@ public class InteractionService {
             changes.add("步数 " + parsed.steps());
         }
 
+        if (parsed.hasForecastData()) {
+            applyForecastToState(
+                    state,
+                    new ForecastComputation(
+                            parsed.glucoseRiskLevel(),
+                            parsed.calibrationApplied(),
+                            parsed.peakGlucoseMmol(),
+                            parsed.peakHourOffset(),
+                            parsed.returnToBaselineHourOffset(),
+                            parsed.glucoseForecast8h(),
+                            parsed.forecastAnchorGlucoseMmol()
+                    ),
+                    "dify"
+            );
+            changes.add("8 小时血糖预测");
+        }
+
         if (parsed.glucoseMmol() != null) {
             state.setGlucoseMmol(parsed.glucoseMmol());
             CareRecord record = new CareRecord();
@@ -297,6 +299,7 @@ public class InteractionService {
             record.setDurationMinutes(0);
             record.setStatus("reported");
             record.setNote(trimToLength(message, 300));
+            record.setGlucoseMmol(parsed.glucoseMmol());
             careRecordRepository.save(record);
             changes.add("血糖 " + formatDecimal(parsed.glucoseMmol()) + " mmol/L");
             persisted = true;
@@ -317,6 +320,14 @@ public class InteractionService {
             persisted = true;
         }
 
+        if (!parsed.hasForecastData()) {
+            ForecastComputation fallbackForecast = buildFallbackForecast(parsed, state, message);
+            if (fallbackForecast != null) {
+                applyForecastToState(state, fallbackForecast, "local");
+                changes.add(Boolean.TRUE.equals(fallbackForecast.calibrationApplied()) ? "血糖预测校准" : "8 小时血糖预测");
+            }
+        }
+
         if (!persisted) {
             CareRecord record = new CareRecord();
             record.setUser(user);
@@ -332,21 +343,49 @@ public class InteractionService {
         return changes;
     }
 
-    private ParsedInteraction parseMessage(String message) {
+    private ParsedInteraction parseMessage(Long userId, String message) {
+        UserProfile profile = userProfileRepository.findByUserId(userId).orElse(null);
+        return difyRecordExtractorClient.extract(userId, message, profile)
+                .filter(DifyRecordExtractorClient.RecordExtractionResult::hasStructuredData)
+                .map(this::toParsedInteraction)
+                .orElseGet(() -> parseMessageLocally(message));
+    }
+
+    private ParsedInteraction parseMessageLocally(String message) {
         String normalized = message.toLowerCase(Locale.ROOT);
         Integer steps = extractInt(message, "(\\d+)\\s*(?:步|steps?)");
         Integer calories = extractInt(message, "(\\d+)\\s*(?:kcal|千卡|卡路里|卡)\\b");
-        Integer exerciseMinutes =
-                containsAny(normalized, "走", "跑", "骑", "运动", "训练", "快走", "步行")
-                        ? extractInt(message, "(\\d+)\\s*(?:分钟|分)\\b")
-                        : null;
+        Integer exerciseMinutes = containsAny(normalized, "走", "跑", "骑", "运动", "训练", "快走", "步行")
+                ? extractInt(message, "(\\d+)\\s*(?:分钟|分|min)\\b")
+                : null;
         Double glucose = extractDouble(message, "血糖[^\\d]*(\\d+(?:\\.\\d+)?)");
-        Double sleepHours =
-                containsAny(message, "睡", "睡眠", "入睡")
-                        ? extractDouble(message, "(\\d+(?:\\.\\d+)?)\\s*(?:小时|h)\\b")
-                        : null;
+        Double sleepHours = containsAny(message, "睡", "睡眠", "入睡")
+                ? extractDouble(message, "(\\d+(?:\\.\\d+)?)\\s*(?:小时|h)\\b")
+                : null;
 
-        return new ParsedInteraction(calories, exerciseMinutes, steps, glucose, sleepHours);
+        return new ParsedInteraction(calories, exerciseMinutes, steps, glucose, sleepHours, null, null, null, null, null, null, null, null, List.of(), null, null, null);
+    }
+
+    private ParsedInteraction toParsedInteraction(DifyRecordExtractorClient.RecordExtractionResult extracted) {
+        return new ParsedInteraction(
+                extracted.calories(),
+                extracted.exerciseMinutes(),
+                extracted.steps(),
+                extracted.glucoseMmol(),
+                extracted.sleepHours(),
+                extracted.mealType(),
+                extracted.foodName(),
+                extracted.activityName(),
+                extracted.glucoseRiskLevel(),
+                extracted.calibrationApplied(),
+                extracted.peakGlucoseMmol(),
+                extracted.peakHourOffset(),
+                extracted.returnToBaselineHourOffset(),
+                extracted.glucoseForecast8h(),
+                extracted.needsFollowup(),
+                extracted.followupQuestion(),
+                extracted.confidence()
+        );
     }
 
     private AdjustmentModel resolveAdjustment(
@@ -354,34 +393,48 @@ public class InteractionService {
             int steps,
             double sleepHours,
             int calorieGap,
-            DashboardSummaryResponse summary,
             DailyAdviceResponse advice,
-            String feedback
+            String feedback,
+            DayState dayState
     ) {
         String title = calorieGap > 0 ? "压缩碳水负荷" : "补齐活动窗口";
         String parameterLabel = calorieGap > 0 ? "CHO" : "ACT";
         String parameterDelta = calorieGap > 0 ? "-" + clampToFive(calorieGap / 30, 5, 25) + " g" : "+10 min";
         String rationale = "基于今日总摄入、活动量与对话归档综合推演。";
         String observation = advice.adviceText();
+        boolean forecastSuggestsHighRisk =
+                isHighRisk(dayState.glucoseRiskLevel())
+                        || (dayState.peakGlucoseMmol() != null && dayState.peakGlucoseMmol() >= 9.0);
 
-        if (glucose >= 8) {
+        if (forecastSuggestsHighRisk || glucose >= 8) {
             title = "抑制餐后波动";
             parameterLabel = "CHO";
             parameterDelta = "-18 g";
-            rationale = "对话中识别到较高血糖值，优先压缩餐后波动。";
-            observation = "系统判定当前主要风险来自餐后峰值，应优先调整主食负荷并补上餐后轻步行。";
+            rationale = "对话中识别到较高血糖风险，优先压缩餐后波动。";
+            observation = buildForecastObservation(dayState, "系统判定当前主要风险来自餐后峰值，应优先调整主食负荷并补上餐后轻步行。");
         } else if (steps < 5000) {
             title = "补齐活动量";
             parameterLabel = "ACT";
             parameterDelta = "+12 min";
             rationale = "步数仍处于低位，先把低强度活动拉回稳定区间。";
-            observation = "系统判定当前主要风险来自久坐与低活动量。";
+            observation = buildForecastObservation(dayState, "系统判定当前主要风险来自久坐与低活动量。");
         } else if (sleepHours < 6.5) {
             title = "修复恢复窗口";
             parameterLabel = "SLEEP";
             parameterDelta = "+0.5 h";
             rationale = "睡眠恢复不足时，额外加练的收益不如先补足恢复。";
-            observation = "系统判定当前主要风险来自恢复窗口不足。";
+            observation = buildForecastObservation(dayState, "系统判定当前主要风险来自恢复窗口不足。");
+        } else {
+            observation = buildForecastObservation(dayState, observation);
+        }
+
+        if (dayState.peakGlucoseMmol() != null && dayState.peakHourOffset() != null) {
+            rationale = rationale + " 预测在 %s 达到 %s mmol/L 峰值。"
+                    .formatted(formatHourOffset(dayState.peakHourOffset()), formatDecimal(dayState.peakGlucoseMmol()));
+        }
+
+        if (Boolean.TRUE.equals(dayState.calibrationApplied())) {
+            rationale = rationale + " 已按最新实测血糖完成校准。";
         }
 
         if ("reject".equals(feedback)) {
@@ -391,6 +444,255 @@ public class InteractionService {
         }
 
         return new AdjustmentModel(title, parameterLabel, parameterDelta, rationale, observation);
+    }
+
+    private String resolveMealType(ParsedInteraction parsed, String message) {
+        return StringUtils.hasText(parsed.mealType()) ? parsed.mealType() : inferMealType(message);
+    }
+
+    private String resolveFoodName(ParsedInteraction parsed, String message) {
+        return StringUtils.hasText(parsed.foodName()) ? parsed.foodName() : inferFoodName(message);
+    }
+
+    private String resolveActivityName(ParsedInteraction parsed, String message, Integer steps) {
+        return StringUtils.hasText(parsed.activityName()) ? parsed.activityName() : inferActivityName(message, steps);
+    }
+
+    private double resolveDashboardGlucose(DayState dayState, Double recordedGlucose) {
+        if (dayState.glucoseMmol() != null) {
+            return dayState.glucoseMmol();
+        }
+        if (recordedGlucose != null) {
+            return recordedGlucose;
+        }
+        if (dayState.forecastAnchorGlucoseMmol() != null) {
+            return dayState.forecastAnchorGlucoseMmol();
+        }
+        return DEFAULT_GLUCOSE;
+    }
+
+    private double resolveDashboardGlucose(DayState dayState) {
+        if (dayState.glucoseMmol() != null) {
+            return dayState.glucoseMmol();
+        }
+        if (dayState.forecastAnchorGlucoseMmol() != null) {
+            return dayState.forecastAnchorGlucoseMmol();
+        }
+        return DEFAULT_GLUCOSE;
+    }
+
+    private String resolveGlucoseMetricDescriptor(DayState dayState) {
+        if (dayState.glucoseMmol() != null) {
+            return "今日实测血糖";
+        }
+        if (!dayState.glucoseForecast8h().isEmpty()) {
+            return "local".equals(dayState.forecastSource()) ? "本地 8 小时预测起点" : "Dify 8 小时预测起点";
+        }
+        return "暂无实时回传，先展示默认基线";
+    }
+
+    private String resolveGlucoseMetricSource(DayState dayState) {
+        if (dayState.glucoseMmol() != null) {
+            return "对话解析";
+        }
+        if (!dayState.glucoseForecast8h().isEmpty()) {
+            return "local".equals(dayState.forecastSource()) ? "规则模拟" : "Dify 工作流";
+        }
+        return "默认基线";
+    }
+
+    private boolean isHighRisk(String riskLevel) {
+        if (!StringUtils.hasText(riskLevel)) {
+            return false;
+        }
+        String normalized = riskLevel.trim().toLowerCase(Locale.ROOT);
+        return normalized.contains("high") || normalized.contains("高");
+    }
+
+    private String buildForecastObservation(DayState dayState, String fallback) {
+        List<String> fragments = new ArrayList<>();
+
+        if (StringUtils.hasText(dayState.glucoseRiskLevel())) {
+            fragments.add("血糖预测风险等级：" + dayState.glucoseRiskLevel());
+        }
+        if (dayState.peakGlucoseMmol() != null) {
+            String peakText = "预计峰值 " + formatDecimal(dayState.peakGlucoseMmol()) + " mmol/L";
+            if (dayState.peakHourOffset() != null) {
+                peakText = peakText + "（" + formatHourOffset(dayState.peakHourOffset()) + "）";
+            }
+            fragments.add(peakText);
+        }
+        if (dayState.returnToBaselineHourOffset() != null) {
+            fragments.add("约 " + formatHourOffset(dayState.returnToBaselineHourOffset()) + " 回落到基线");
+        }
+        if (Boolean.TRUE.equals(dayState.calibrationApplied())) {
+            fragments.add("已结合最新实测血糖校准");
+        }
+
+        if (fragments.isEmpty()) {
+            return fallback;
+        }
+
+        return String.join("，", fragments) + "。";
+    }
+
+    private ForecastComputation buildFallbackForecast(ParsedInteraction parsed, DayState state, String message) {
+        boolean hasMealSignal = parsed.calories() != null
+                || StringUtils.hasText(parsed.foodName())
+                || containsAny(message, "早餐", "早饭", "午餐", "午饭", "晚餐", "晚饭", "加餐", "零食", "米饭", "面", "面包", "水果", "香蕉", "奶茶", "蛋糕", "粥");
+        boolean hasOnlyCalibrationSignal = parsed.glucoseMmol() != null && !hasMealSignal && !state.glucoseForecast8h().isEmpty();
+
+        if (hasOnlyCalibrationSignal) {
+            return recalibrateForecast(state.glucoseForecast8h(), parsed.glucoseMmol());
+        }
+
+        if (!hasMealSignal && parsed.glucoseMmol() == null) {
+            return null;
+        }
+
+        double anchorGlucose = parsed.glucoseMmol() != null
+                ? parsed.glucoseMmol()
+                : state.glucoseMmol() != null ? state.glucoseMmol() : DEFAULT_GLUCOSE;
+        int calories = parsed.calories() != null ? parsed.calories() : estimateCaloriesFromFood(message);
+        int steps = parsed.steps() != null ? parsed.steps() : state.steps() != null ? state.steps() : 0;
+        int exerciseMinutes = parsed.exerciseMinutes() != null ? parsed.exerciseMinutes() : 0;
+        double mealImpact = estimateMealImpact(message, calories);
+        double activityRelief = Math.min(0.9d, (steps / 8000d) * 0.45d + (exerciseMinutes / 40d) * 0.25d);
+        double peakRise = clampDouble(mealImpact - activityRelief, 0.35d, 2.8d);
+        double peakGlucose = clampDouble(anchorGlucose + peakRise, 4.8d, 13.5d);
+        double peakHourOffset = containsAny(message, "奶茶", "蛋糕", "甜点", "果汁") ? 1d : 2d;
+        double returnToBaselineHourOffset = clampDouble(4.5d + (calories / 300d) - activityRelief * 2.2d, 4d, 8d);
+        double terminalValue = clampDouble(Math.max(DEFAULT_GLUCOSE, anchorGlucose - 0.2d), 4.8d, 9.5d);
+
+        List<DifyRecordExtractorClient.GlucoseForecastPoint> points = List.of(
+                new DifyRecordExtractorClient.GlucoseForecastPoint(0, roundOneDecimal(anchorGlucose), parsed.glucoseMmol() != null ? "measured_anchor" : "forecast"),
+                new DifyRecordExtractorClient.GlucoseForecastPoint(1, roundOneDecimal(anchorGlucose + peakRise * (peakHourOffset <= 1d ? 1d : 0.65d)), "forecast"),
+                new DifyRecordExtractorClient.GlucoseForecastPoint(2, roundOneDecimal(peakHourOffset <= 1d ? peakGlucose - peakRise * 0.12d : peakGlucose), "forecast"),
+                new DifyRecordExtractorClient.GlucoseForecastPoint(3, roundOneDecimal(peakGlucose - peakRise * 0.22d), "forecast"),
+                new DifyRecordExtractorClient.GlucoseForecastPoint(4, roundOneDecimal(peakGlucose - peakRise * 0.45d), "forecast"),
+                new DifyRecordExtractorClient.GlucoseForecastPoint(6, roundOneDecimal(Math.max(terminalValue + 0.2d, peakGlucose - peakRise * 0.78d)), "forecast"),
+                new DifyRecordExtractorClient.GlucoseForecastPoint(8, roundOneDecimal(terminalValue), "forecast")
+        );
+
+        return new ForecastComputation(
+                classifyRiskLevel(peakGlucose),
+                parsed.glucoseMmol() != null,
+                roundOneDecimal(peakGlucose),
+                peakHourOffset,
+                roundOneDecimal(returnToBaselineHourOffset),
+                points,
+                roundOneDecimal(anchorGlucose)
+        );
+    }
+
+    private ForecastComputation recalibrateForecast(
+            List<DifyRecordExtractorClient.GlucoseForecastPoint> existingForecast,
+            double measuredGlucose
+    ) {
+        if (existingForecast == null || existingForecast.isEmpty()) {
+            return null;
+        }
+
+        double currentAnchor = existingForecast.stream()
+                .filter(point -> point.hourOffset() != null && point.hourOffset() == 0)
+                .map(DifyRecordExtractorClient.GlucoseForecastPoint::predictedGlucoseMmol)
+                .findFirst()
+                .orElse(existingForecast.get(0).predictedGlucoseMmol());
+        double delta = measuredGlucose - currentAnchor;
+
+        List<DifyRecordExtractorClient.GlucoseForecastPoint> adjustedPoints = existingForecast.stream()
+                .map(point -> {
+                    double influence = 1d - Math.min(Math.max(point.hourOffset(), 0), 8) / 8d * 0.35d;
+                    double adjustedValue = clampDouble(point.predictedGlucoseMmol() + delta * influence, 4.8d, 13.5d);
+                    String pointType = point.hourOffset() != null && point.hourOffset() == 0 ? "measured_anchor" : point.pointType();
+                    return new DifyRecordExtractorClient.GlucoseForecastPoint(point.hourOffset(), roundOneDecimal(adjustedValue), pointType);
+                })
+                .toList();
+
+        double peakGlucose = adjustedPoints.stream()
+                .map(DifyRecordExtractorClient.GlucoseForecastPoint::predictedGlucoseMmol)
+                .max(Double::compareTo)
+                .orElse(measuredGlucose);
+        double peakHourOffset = adjustedPoints.stream()
+                .filter(point -> Objects.equals(point.predictedGlucoseMmol(), peakGlucose))
+                .map(DifyRecordExtractorClient.GlucoseForecastPoint::hourOffset)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(2);
+
+        return new ForecastComputation(
+                classifyRiskLevel(peakGlucose),
+                true,
+                roundOneDecimal(peakGlucose),
+                Double.valueOf(peakHourOffset),
+                6d,
+                adjustedPoints,
+                roundOneDecimal(measuredGlucose)
+        );
+    }
+
+    private void applyForecastToState(DayState state, ForecastComputation forecast, String source) {
+        if (forecast == null) {
+            return;
+        }
+
+        state.setGlucoseRiskLevel(forecast.glucoseRiskLevel());
+        state.setCalibrationApplied(forecast.calibrationApplied());
+        state.setPeakGlucoseMmol(forecast.peakGlucoseMmol());
+        state.setPeakHourOffset(forecast.peakHourOffset());
+        state.setReturnToBaselineHourOffset(forecast.returnToBaselineHourOffset());
+        state.setGlucoseForecast8h(forecast.glucoseForecast8h());
+        state.setForecastAnchorGlucoseMmol(forecast.forecastAnchorGlucoseMmol());
+        state.setForecastSource(source);
+    }
+
+    private int estimateCaloriesFromFood(String message) {
+        int estimate = 320;
+        if (containsAny(message, "米饭", "面", "面包", "粥", "香蕉")) {
+            estimate += 180;
+        }
+        if (containsAny(message, "奶茶", "蛋糕", "甜点", "果汁")) {
+            estimate += 220;
+        }
+        if (containsAny(message, "鸡胸肉", "鸡蛋", "豆腐", "蔬菜", "沙拉")) {
+            estimate += 120;
+        }
+        return estimate;
+    }
+
+    private double estimateMealImpact(String message, int calories) {
+        double baseImpact = 0.75d + Math.min(calories, 900) / 300d * 0.35d;
+        if (containsAny(message, "米饭", "面", "面包", "粥", "香蕉", "水果")) {
+            baseImpact += 0.35d;
+        }
+        if (containsAny(message, "奶茶", "蛋糕", "甜点", "果汁")) {
+            baseImpact += 0.55d;
+        }
+        if (containsAny(message, "鸡胸肉", "蔬菜", "沙拉", "鸡蛋", "豆腐")) {
+            baseImpact -= 0.12d;
+        }
+        return baseImpact;
+    }
+
+    private String classifyRiskLevel(double peakGlucose) {
+        if (peakGlucose >= 10d) {
+            return "高";
+        }
+        if (peakGlucose >= 8.5d) {
+            return "中";
+        }
+        return "低";
+    }
+
+    private double roundOneDecimal(double value) {
+        return Math.round(value * 10d) / 10d;
+    }
+
+    private double clampDouble(double value, double min, double max) {
+        if (Double.isNaN(value)) {
+            return min;
+        }
+        return Math.max(min, Math.min(max, value));
     }
 
     private User findUser(Long userId) {
@@ -492,6 +794,13 @@ public class InteractionService {
         return String.format(Locale.US, "%.1f", value);
     }
 
+    private String formatHourOffset(double hourOffset) {
+        if (Math.abs(hourOffset - Math.rint(hourOffset)) < 0.05d) {
+            return "+" + (int) Math.rint(hourOffset) + "h";
+        }
+        return "+" + formatDecimal(hourOffset) + "h";
+    }
+
     private int clampToFive(int multiplier, int min, int max) {
         int resolved = Math.max(min, Math.min(max, multiplier * 5));
         return Math.max(min, resolved);
@@ -502,8 +811,40 @@ public class InteractionService {
             Integer exerciseMinutes,
             Integer steps,
             Double glucoseMmol,
-            Double sleepHours
+            Double sleepHours,
+            String mealType,
+            String foodName,
+            String activityName,
+            String glucoseRiskLevel,
+            Boolean calibrationApplied,
+            Double peakGlucoseMmol,
+            Double peakHourOffset,
+            Double returnToBaselineHourOffset,
+            List<DifyRecordExtractorClient.GlucoseForecastPoint> glucoseForecast8h,
+            Boolean needsFollowup,
+            String followupQuestion,
+            Double confidence
     ) {
+        public boolean hasForecastData() {
+            return StringUtils.hasText(glucoseRiskLevel)
+                    || calibrationApplied != null
+                    || peakGlucoseMmol != null
+                    || peakHourOffset != null
+                    || returnToBaselineHourOffset != null
+                    || (glucoseForecast8h != null && !glucoseForecast8h.isEmpty());
+        }
+
+        public Double forecastAnchorGlucoseMmol() {
+            if (glucoseForecast8h == null || glucoseForecast8h.isEmpty()) {
+                return null;
+            }
+
+            return glucoseForecast8h.stream()
+                    .filter(point -> point.hourOffset() != null && point.hourOffset() == 0)
+                    .map(DifyRecordExtractorClient.GlucoseForecastPoint::predictedGlucoseMmol)
+                    .findFirst()
+                    .orElse(glucoseForecast8h.get(0).predictedGlucoseMmol());
+        }
     }
 
     private record AdjustmentModel(
@@ -515,10 +856,29 @@ public class InteractionService {
     ) {
     }
 
+    private record ForecastComputation(
+            String glucoseRiskLevel,
+            Boolean calibrationApplied,
+            Double peakGlucoseMmol,
+            Double peakHourOffset,
+            Double returnToBaselineHourOffset,
+            List<DifyRecordExtractorClient.GlucoseForecastPoint> glucoseForecast8h,
+            Double forecastAnchorGlucoseMmol
+    ) {
+    }
+
     private static final class DayState {
         private Integer steps;
         private Double glucoseMmol;
+        private Double forecastAnchorGlucoseMmol;
         private Double sleepHours;
+        private String glucoseRiskLevel;
+        private Boolean calibrationApplied;
+        private Double peakGlucoseMmol;
+        private Double peakHourOffset;
+        private Double returnToBaselineHourOffset;
+        private List<DifyRecordExtractorClient.GlucoseForecastPoint> glucoseForecast8h = List.of();
+        private String forecastSource;
 
         public Integer steps() {
             return steps;
@@ -536,6 +896,14 @@ public class InteractionService {
             this.glucoseMmol = glucoseMmol;
         }
 
+        public Double forecastAnchorGlucoseMmol() {
+            return forecastAnchorGlucoseMmol;
+        }
+
+        public void setForecastAnchorGlucoseMmol(Double forecastAnchorGlucoseMmol) {
+            this.forecastAnchorGlucoseMmol = forecastAnchorGlucoseMmol;
+        }
+
         public Double sleepHours() {
             return sleepHours;
         }
@@ -543,5 +911,62 @@ public class InteractionService {
         public void setSleepHours(Double sleepHours) {
             this.sleepHours = sleepHours;
         }
+
+        public String glucoseRiskLevel() {
+            return glucoseRiskLevel;
+        }
+
+        public void setGlucoseRiskLevel(String glucoseRiskLevel) {
+            this.glucoseRiskLevel = glucoseRiskLevel;
+        }
+
+        public Boolean calibrationApplied() {
+            return calibrationApplied;
+        }
+
+        public void setCalibrationApplied(Boolean calibrationApplied) {
+            this.calibrationApplied = calibrationApplied;
+        }
+
+        public Double peakGlucoseMmol() {
+            return peakGlucoseMmol;
+        }
+
+        public void setPeakGlucoseMmol(Double peakGlucoseMmol) {
+            this.peakGlucoseMmol = peakGlucoseMmol;
+        }
+
+        public Double peakHourOffset() {
+            return peakHourOffset;
+        }
+
+        public void setPeakHourOffset(Double peakHourOffset) {
+            this.peakHourOffset = peakHourOffset;
+        }
+
+        public Double returnToBaselineHourOffset() {
+            return returnToBaselineHourOffset;
+        }
+
+        public void setReturnToBaselineHourOffset(Double returnToBaselineHourOffset) {
+            this.returnToBaselineHourOffset = returnToBaselineHourOffset;
+        }
+
+        public List<DifyRecordExtractorClient.GlucoseForecastPoint> glucoseForecast8h() {
+            return glucoseForecast8h;
+        }
+
+        public void setGlucoseForecast8h(List<DifyRecordExtractorClient.GlucoseForecastPoint> glucoseForecast8h) {
+            this.glucoseForecast8h = glucoseForecast8h == null ? List.of() : List.copyOf(glucoseForecast8h);
+        }
+
+        public String forecastSource() {
+            return forecastSource;
+        }
+
+        public void setForecastSource(String forecastSource) {
+            this.forecastSource = forecastSource;
+        }
     }
+
 }

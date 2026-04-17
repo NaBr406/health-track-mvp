@@ -33,6 +33,14 @@ app:
     base-url: ${DIFY_BASE_URL:}
     api-key: ${DIFY_API_KEY:}
     workflow-id: ${DIFY_WORKFLOW_ID:}
+    input-variable: ${DIFY_INPUT_VARIABLE:}
+    input-stringify: ${DIFY_INPUT_STRINGIFY:false}
+    extractor:
+      base-url: ${DIFY_EXTRACTOR_BASE_URL:}
+      api-key: ${DIFY_EXTRACTOR_API_KEY:}
+      workflow-id: ${DIFY_EXTRACTOR_WORKFLOW_ID:}
+      input-variable: ${DIFY_EXTRACTOR_INPUT_VARIABLE:UserInput}
+      profile-input-variable: ${DIFY_EXTRACTOR_PROFILE_INPUT_VARIABLE:}
   seed:
     enabled: true
 

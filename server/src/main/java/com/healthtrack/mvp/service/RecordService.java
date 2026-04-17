@@ -102,6 +102,7 @@ public class RecordService {
         record.setDurationMinutes(request.durationMinutes());
         record.setStatus(request.status());
         record.setNote(request.note());
+        record.setGlucoseMmol(request.glucoseMmol());
         return toCareResponse(careRecordRepository.save(record));
     }
 
@@ -159,6 +160,7 @@ public class RecordService {
                 record.getDurationMinutes(),
                 record.getStatus(),
                 record.getNote(),
+                record.getGlucoseMmol(),
                 record.getCreatedAt()
         );
     }

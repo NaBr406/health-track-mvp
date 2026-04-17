@@ -11,6 +11,14 @@ type ImmersiveTabBarContextValue = {
 
 const ImmersiveTabBarContext = createContext<ImmersiveTabBarContextValue | null>(null);
 
+export function getTabBarBottomOffset(bottomInset: number) {
+  return Math.max(bottomInset, spacing.md);
+}
+
+export function getTabBarReservedInset(bottomInset: number) {
+  return layout.tabBarHeight + getTabBarBottomOffset(bottomInset) + spacing.lg;
+}
+
 export function ImmersiveTabBarProvider({ children }: PropsWithChildren) {
   const [hidden, setHiddenState] = useState(false);
 
@@ -39,7 +47,7 @@ export function useImmersiveTabBar() {
 
   return {
     ...context,
-    bottomInset: layout.tabBarHeight + Math.max(insets.bottom, spacing.md) + spacing.lg
+    bottomInset: getTabBarReservedInset(insets.bottom)
   };
 }
 

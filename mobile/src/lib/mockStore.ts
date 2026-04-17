@@ -36,7 +36,8 @@ function ensurePoint(date: string) {
     exerciseMinutes: 0,
     steps: 0,
     sleepHours: 0,
-    glucoseMmol: parseLeadingNumber(profileStore.fastingGlucoseBaseline) ?? 7.2
+    glucoseMmol: parseLeadingNumber(profileStore.fastingGlucoseBaseline) ?? 7.2,
+    glucoseSource: "recorded"
   };
 
   historyStore = [...historyStore, created].sort((left, right) => left.date.localeCompare(right.date));
@@ -151,8 +152,23 @@ function buildHeadline() {
   return `今日方案围绕 ${profileStore.conditionLabel} 稳定控制展开，重点盯住餐后波动、活动缺口与恢复质量。`;
 }
 
+function buildGlucoseForecast(point: MonitoringHistoryPoint) {
+  const peak = Number((point.glucoseMmol + (point.glucoseMmol >= 8 ? 1.1 : 0.8)).toFixed(1));
+  return [
+    { hourOffset: 0, predictedGlucoseMmol: point.glucoseMmol, pointType: "measured_anchor" },
+    { hourOffset: 1, predictedGlucoseMmol: Number((point.glucoseMmol + 0.5).toFixed(1)), pointType: "forecast" },
+    { hourOffset: 2, predictedGlucoseMmol: peak, pointType: "forecast" },
+    { hourOffset: 4, predictedGlucoseMmol: Number((peak - 0.7).toFixed(1)), pointType: "forecast" },
+    { hourOffset: 6, predictedGlucoseMmol: Number((point.glucoseMmol + 0.2).toFixed(1)), pointType: "forecast" },
+    { hourOffset: 8, predictedGlucoseMmol: Number(Math.max(point.glucoseMmol - 0.1, 5.4).toFixed(1)), pointType: "forecast" }
+  ];
+}
+
 function buildSnapshot(date = getTodayString()): DashboardSnapshot {
   const point = ensurePoint(date);
+  const glucoseForecast8h = buildGlucoseForecast(point);
+  const peakGlucoseMmol = Math.max(...glucoseForecast8h.map((item) => item.predictedGlucoseMmol));
+  const peakPoint = glucoseForecast8h.find((item) => item.predictedGlucoseMmol === peakGlucoseMmol);
 
   return {
     focusDate: date,
@@ -162,6 +178,12 @@ function buildSnapshot(date = getTodayString()): DashboardSnapshot {
     observation: buildObservation(point),
     refreshedAt: new Date().toISOString(),
     history: historyWindow(date),
+    glucoseRiskLevel: peakGlucoseMmol >= 9 ? "高" : peakGlucoseMmol >= 8 ? "中" : "低",
+    calibrationApplied: true,
+    peakGlucoseMmol,
+    peakHourOffset: peakPoint?.hourOffset ?? 2,
+    returnToBaselineHourOffset: 6,
+    glucoseForecast8h,
     dataSource: "mock"
   };
 }
@@ -219,6 +241,7 @@ function applyMessageToPoint(point: MonitoringHistoryPoint, message: string) {
   const glucose = extractNumber(message, /血糖[^\d]*(\d+(?:\.\d+)?)/i);
   if (typeof glucose === "number") {
     point.glucoseMmol = glucose;
+    point.glucoseSource = "recorded";
     changes.push(`血糖 ${glucose.toFixed(1)} mmol/L`);
   }
 

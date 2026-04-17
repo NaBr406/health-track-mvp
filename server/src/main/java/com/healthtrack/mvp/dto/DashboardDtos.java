@@ -13,7 +13,8 @@ public final class DashboardDtos {
             LocalDate date,
             Integer calories,
             Integer exerciseMinutes,
-            Integer careMinutes
+            Integer careMinutes,
+            Double glucoseMmol
     ) {
     }
 
@@ -61,7 +62,15 @@ public final class DashboardDtos {
             Integer exerciseMinutes,
             Integer steps,
             Double sleepHours,
-            Double glucoseMmol
+            Double glucoseMmol,
+            String glucoseSource
+    ) {
+    }
+
+    public record GlucoseForecastPointResponse(
+            Integer hourOffset,
+            Double predictedGlucoseMmol,
+            String pointType
     ) {
     }
 
@@ -73,6 +82,13 @@ public final class DashboardDtos {
             String observation,
             LocalDateTime refreshedAt,
             List<MonitoringHistoryPointResponse> history,
+            String glucoseRiskLevel,
+            Boolean calibrationApplied,
+            Double peakGlucoseMmol,
+            Double peakHourOffset,
+            Double returnToBaselineHourOffset,
+            List<GlucoseForecastPointResponse> glucoseForecast8h,
+            String forecastSource,
             String dataSource
     ) {
     }

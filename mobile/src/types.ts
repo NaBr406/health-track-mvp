@@ -58,6 +58,13 @@ export type MonitoringHistoryPoint = {
   steps: number;
   sleepHours: number;
   glucoseMmol: number;
+  glucoseSource?: "recorded" | "derived" | "default" | string | null;
+};
+
+export type GlucoseForecastPoint = {
+  hourOffset: number;
+  predictedGlucoseMmol: number;
+  pointType?: "measured_anchor" | "forecast" | string;
 };
 
 export type DashboardSnapshot = {
@@ -68,6 +75,13 @@ export type DashboardSnapshot = {
   observation: string;
   refreshedAt: string;
   history: MonitoringHistoryPoint[];
+  glucoseRiskLevel?: string | null;
+  calibrationApplied?: boolean | null;
+  peakGlucoseMmol?: number | null;
+  peakHourOffset?: number | null;
+  returnToBaselineHourOffset?: number | null;
+  glucoseForecast8h?: GlucoseForecastPoint[];
+  forecastSource?: "dify" | "local" | string | null;
   dataSource: DataSource;
 };
 

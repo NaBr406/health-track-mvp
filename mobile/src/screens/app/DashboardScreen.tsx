@@ -8,7 +8,7 @@ import { api } from "../../lib/api";
 import { formatDateTime, getTodayString, parseLeadingNumber } from "../../lib/utils";
 import { useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
 import { borders, colors, layout, radii, shadows, spacing, typography } from "../../theme/tokens";
-import type { AuthSession, DashboardMetric, DashboardSnapshot, HealthProfile } from "../../types";
+import type { AuthSession, DashboardMetric, DashboardSnapshot, GlucoseForecastPoint, HealthProfile } from "../../types";
 
 type DashboardScreenProps = {
   session: AuthSession | null;
@@ -34,6 +34,7 @@ type MetricCardMeta = {
 type GlucoseChartPoint = {
   label: string;
   value: number;
+  pointType?: string;
 };
 
 type GlucoseChartMeta = {
@@ -44,20 +45,12 @@ type GlucoseChartMeta = {
   xLabels: string[];
   yTicks: number[];
   markerIndexes: number[];
-  averageValue: number;
-  stabilityText: string;
+  footerText: string;
 };
 
 const DEFAULT_CALORIE_TARGET = 1700;
 const DEFAULT_EXERCISE_TARGET = 40;
 const DEFAULT_GLUCOSE_TARGET = 7.2;
-const GLUCOSE_CHART_START_HOUR = 0;
-const GLUCOSE_CHART_END_HOUR = 24;
-const GLUCOSE_CHART_STEP_MINUTES = 30;
-const GLUCOSE_AXIS_LABEL_EVERY = 8;
-const GLUCOSE_SPLIT_HOUR = 12;
-const GLUCOSE_SPLIT_INDEX = (GLUCOSE_SPLIT_HOUR * 60) / GLUCOSE_CHART_STEP_MINUTES;
-const GLUCOSE_Y_TICKS = [9, 7, 5, 3];
 const GLUCOSE_LEFT_LINE = "#8FD7CA";
 const GLUCOSE_LEFT_FILL = "rgba(143, 215, 202, 0.18)";
 const GLUCOSE_RIGHT_LINE = "#F3B9A7";
@@ -192,9 +185,7 @@ function GlucoseMetricCard({ metric }: { metric: MetricCardMeta }) {
         <Text style={styles.glucoseTrendUnit}>{metric.unitText}</Text>
       </View>
       <GlucoseLineChart chart={metric.chart} />
-      <Text style={styles.glucoseTrendFooter}>
-        平均 {metric.chart.averageValue.toFixed(1)} mmol/L。{metric.chart.stabilityText}。每30分钟。
-      </Text>
+      <Text style={styles.glucoseTrendFooter}>{metric.chart.footerText}</Text>
     </View>
   );
 }
@@ -269,12 +260,12 @@ function GlucoseLineChart({ chart }: { chart: GlucoseChartMeta }) {
   const availableHeight = height - chartPaddingTop - chartPaddingBottom;
   const chartRange = Math.max(chart.maxValue - chart.minValue, 0.1);
   const stepX = (width - chartPaddingLeft - chartPaddingRight) / Math.max(chart.points.length - 1, 1);
-
-  const resolveY = (value: number) =>
-    chartPaddingTop + ((chart.maxValue - value) / chartRange) * availableHeight;
+  const resolveY = (value: number) => chartPaddingTop + ((chart.maxValue - value) / chartRange) * availableHeight;
   const resolveX = (index: number) => chartPaddingLeft + stepX * index;
   const baselineY = resolveY(chart.minValue);
   const lastIndex = chart.points.length - 1;
+  const splitIndex = Math.max(0, Math.min(chart.splitIndex, lastIndex));
+  const hasRightSegment = splitIndex < lastIndex;
 
   const buildSegmentPath = (startIndex: number, endIndex: number) =>
     chart.points
@@ -289,11 +280,6 @@ function GlucoseLineChart({ chart }: { chart: GlucoseChartMeta }) {
     const linePath = buildSegmentPath(startIndex, endIndex);
     return `${linePath} L ${resolveX(endIndex)} ${baselineY} L ${resolveX(startIndex)} ${baselineY} Z`;
   };
-
-  const leftAreaPath = buildSegmentAreaPath(0, chart.splitIndex);
-  const rightAreaPath = buildSegmentAreaPath(chart.splitIndex, lastIndex);
-  const leftLinePath = buildSegmentPath(0, chart.splitIndex);
-  const rightLinePath = buildSegmentPath(chart.splitIndex, lastIndex);
 
   return (
     <View style={styles.glucoseChartBlock}>
@@ -312,49 +298,31 @@ function GlucoseLineChart({ chart }: { chart: GlucoseChartMeta }) {
 
           {chart.yTicks.map((tick) => {
             const y = resolveY(tick);
-            return (
-              <Line
-                key={`y-grid-${tick}`}
-                stroke="rgba(16, 35, 59, 0.08)"
-                strokeWidth={1}
-                x1={chartPaddingLeft}
-                x2={resolveX(lastIndex)}
-                y1={y}
-                y2={y}
-              />
-            );
+            return <Line key={`y-grid-${tick}`} stroke="rgba(16, 35, 59, 0.08)" strokeWidth={1} x1={chartPaddingLeft} x2={resolveX(lastIndex)} y1={y} y2={y} />;
           })}
 
-          {chart.points.map((_, index) => {
-            if (index % GLUCOSE_AXIS_LABEL_EVERY !== 0) {
-              return null;
-            }
-
+          {chart.markerIndexes.map((index) => {
             const x = resolveX(index);
-            return <Line key={`grid-${index}`} stroke="rgba(16, 35, 59, 0.03)" strokeWidth={1} x1={x} x2={x} y1={chartPaddingTop} y2={chartPaddingTop + availableHeight} />;
+            return <Line key={`x-grid-${index}`} stroke="rgba(16, 35, 59, 0.03)" strokeWidth={1} x1={x} x2={x} y1={chartPaddingTop} y2={chartPaddingTop + availableHeight} />;
           })}
 
-          <Path d={leftAreaPath} fill="url(#glucoseLeftFill)" />
-          <Path d={rightAreaPath} fill="url(#glucoseRightFill)" />
-          <Path d={leftLinePath} fill="none" stroke={GLUCOSE_LEFT_LINE} strokeLinecap="round" strokeLinejoin="round" strokeWidth={3.5} />
-          <Path d={rightLinePath} fill="none" stroke={GLUCOSE_RIGHT_LINE} strokeLinecap="round" strokeLinejoin="round" strokeWidth={3.5} />
+          <Path d={buildSegmentAreaPath(0, splitIndex)} fill="url(#glucoseLeftFill)" />
+          {hasRightSegment ? <Path d={buildSegmentAreaPath(splitIndex, lastIndex)} fill="url(#glucoseRightFill)" /> : null}
+          <Path d={buildSegmentPath(0, splitIndex)} fill="none" stroke={GLUCOSE_LEFT_LINE} strokeLinecap="round" strokeLinejoin="round" strokeWidth={3.5} />
+          {hasRightSegment ? (
+            <Path d={buildSegmentPath(splitIndex, lastIndex)} fill="none" stroke={GLUCOSE_RIGHT_LINE} strokeLinecap="round" strokeLinejoin="round" strokeWidth={3.5} />
+          ) : null}
 
-          {chart.points.map((point, index) => {
-            if (!chart.markerIndexes.includes(index)) {
-              return null;
-            }
-
-            return (
-              <Circle
-                key={`point-${index}`}
-                cx={resolveX(index)}
-                cy={resolveY(point.value)}
-                fill={index <= chart.splitIndex ? GLUCOSE_LEFT_LINE : GLUCOSE_RIGHT_LINE}
-                opacity={0.9}
-                r={4.6}
-              />
-            );
-          })}
+          {chart.points.map((point, index) => (
+            <Circle
+              key={`point-${index}`}
+              cx={resolveX(index)}
+              cy={resolveY(point.value)}
+              fill={index <= splitIndex ? GLUCOSE_LEFT_LINE : GLUCOSE_RIGHT_LINE}
+              opacity={0.9}
+              r={point.pointType === "measured_anchor" ? 4.8 : 4.2}
+            />
+          ))}
         </Svg>
 
         <View pointerEvents="none" style={styles.glucoseYAxis}>
@@ -381,30 +349,26 @@ function buildAdviceCard(snapshot: DashboardSnapshot | null) {
   if (!snapshot) {
     return {
       title: "系统正在生成今日方案",
-      summary: "同步最近的对话与监测摘要后，这里会显示压缩后的今日建议。",
+      summary: "同步最近的对话和监测摘要后，这里会展示压缩后的今日建议。",
       parameter: "等待同步",
       timestamp: "同步中"
     };
   }
 
-  const parameterLabel = `${snapshot.adjustment.parameterLabel} ${snapshot.adjustment.parameterDelta}`;
   const normalizedLabel = snapshot.adjustment.parameterLabel.toUpperCase();
   let title = snapshot.adjustment.title;
-
   if (normalizedLabel.includes("CHO")) {
     title = `今日碳水建议 ${snapshot.adjustment.parameterDelta}`;
   } else if (normalizedLabel.includes("ACT")) {
     title = `今日活动时长建议 ${snapshot.adjustment.parameterDelta}`;
   } else if (normalizedLabel.includes("SLEEP")) {
     title = `今晚恢复窗口建议 ${snapshot.adjustment.parameterDelta}`;
-  } else if (normalizedLabel.includes("GLU")) {
-    title = `今日血糖控制建议 ${snapshot.adjustment.parameterDelta}`;
   }
 
   return {
     title,
     summary: snapshot.adjustment.summary,
-    parameter: parameterLabel,
+    parameter: `${snapshot.adjustment.parameterLabel} ${snapshot.adjustment.parameterDelta}`,
     timestamp: formatDateTime(snapshot.adjustment.generatedAt)
   };
 }
@@ -415,6 +379,8 @@ function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: Hea
   const exerciseValue = getMetricNumber(snapshot, "exercise");
   const glucoseValue = getMetricNumber(snapshot, "glucose");
   const glucoseChart = buildGlucoseChart(snapshot, healthProfile);
+  const hasForecast = Boolean(snapshot?.glucoseForecast8h?.length);
+  const glucoseSource = resolveForecastSourceLabel(snapshot);
 
   return [
     {
@@ -441,23 +407,91 @@ function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: Hea
     },
     {
       id: "glucose",
-      label: "血糖趋势",
-      descriptor: "过去7天",
+      label: hasForecast ? "血糖 8h 预测" : "血糖趋势",
+      descriptor: hasForecast ? glucoseSource : "基于最近记录生成",
       iconName: "pulse-outline",
       valueText: glucoseValue > 0 ? glucoseValue.toFixed(1) : "--",
       unitText: "mmol/L",
-      statusText: "",
-      helperText: "",
+      statusText: snapshot?.glucoseRiskLevel ? `风险 ${snapshot.glucoseRiskLevel}` : "",
+      helperText: snapshot?.calibrationApplied ? "已按最新实测值校准" : "",
       chart: glucoseChart
     }
   ];
 }
 
 function buildGlucoseChart(snapshot: DashboardSnapshot | null, healthProfile: HealthProfile | null): GlucoseChartMeta {
-  const historyValues = snapshot?.history?.map((item) => item.glucoseMmol).filter((value) => Number.isFinite(value)) ?? [];
+  const forecast = snapshot?.glucoseForecast8h?.filter((point) => Number.isFinite(point.predictedGlucoseMmol)) ?? [];
+  if (forecast.length > 0) {
+    return buildForecastChart(snapshot, forecast);
+  }
+  const recordedHistory = getRecordedGlucoseHistory(snapshot);
+  if (recordedHistory.length > 0) {
+    return buildHistoryChart(recordedHistory);
+  }
+  return buildSyntheticChart(snapshot, healthProfile);
+}
+
+function resolveForecastSourceLabel(snapshot: DashboardSnapshot | null) {
+  if (snapshot?.forecastSource === "dify") {
+    return "Dify 工作流";
+  }
+  if (snapshot?.forecastSource === "local") {
+    return snapshot.calibrationApplied ? "规则模拟（已校准）" : "规则模拟";
+  }
+  return findMetric(snapshot, "glucose")?.source || "基于最近记录生成";
+}
+
+function buildForecastChart(snapshot: DashboardSnapshot | null, forecast: GlucoseForecastPoint[]): GlucoseChartMeta {
+  const sorted = [...forecast].sort((left, right) => left.hourOffset - right.hourOffset);
+  const values = sorted.map((point) => point.predictedGlucoseMmol);
+  const ticks = buildYAxisTicks(values);
+
+  return {
+    points: sorted.map((point) => ({
+      label: point.hourOffset === 0 ? "现在" : `+${point.hourOffset}h`,
+      value: Number(point.predictedGlucoseMmol.toFixed(1)),
+      pointType: point.pointType
+    })),
+    minValue: ticks[ticks.length - 1],
+    maxValue: ticks[0],
+    splitIndex: Math.max(sorted.findIndex((point) => point.pointType !== "measured_anchor"), 1),
+    xLabels: buildForecastXAxisLabels(sorted),
+    yTicks: ticks,
+    markerIndexes: sorted.map((_, index) => index),
+    footerText: buildForecastFooter(snapshot, values)
+  };
+}
+
+function getRecordedGlucoseHistory(snapshot: DashboardSnapshot | null) {
+  return (snapshot?.history ?? []).filter(
+    (item) => item.glucoseSource === "recorded" && Number.isFinite(item.glucoseMmol)
+  );
+}
+
+function buildHistoryChart(history: DashboardSnapshot["history"]): GlucoseChartMeta {
+  const points = history.map((item) => ({
+    label: formatHistoryAxisLabel(item.date),
+    value: Number(item.glucoseMmol.toFixed(1)),
+    pointType: "measured_anchor"
+  }));
+  const values = points.map((item) => item.value);
+  const ticks = buildYAxisTicks(values);
+
+  return {
+    points,
+    minValue: ticks[ticks.length - 1],
+    maxValue: ticks[0],
+    splitIndex: points.length - 1,
+    xLabels: buildHistoryXAxisLabels(history),
+    yTicks: ticks,
+    markerIndexes: points.map((_, index) => index),
+    footerText: buildHistoryFooter(values, history.length)
+  };
+}
+
+function buildSyntheticChart(snapshot: DashboardSnapshot | null, healthProfile: HealthProfile | null): GlucoseChartMeta {
+  const historyValues = getRecordedGlucoseHistory(snapshot).map((item) => item.glucoseMmol);
   const currentValue = getMetricNumber(snapshot, "glucose") || parseLeadingNumber(healthProfile?.fastingGlucoseBaseline) || DEFAULT_GLUCOSE_TARGET;
-  const pointCount = ((GLUCOSE_CHART_END_HOUR - GLUCOSE_CHART_START_HOUR) * 60) / GLUCOSE_CHART_STEP_MINUTES + 1;
-  const currentIndex = resolveCurrentChartIndex(snapshot?.focusDate, pointCount);
   const recentAverage = historyValues.length > 0 ? average(historyValues) : average(Array.from(GLUCOSE_ANCHOR_TEMPLATE));
   const averageOffset = clamp(recentAverage - average(Array.from(GLUCOSE_ANCHOR_TEMPLATE)), -0.45, 0.45);
   const currentOffset = clamp(currentValue - DEFAULT_GLUCOSE_TARGET, -0.55, 0.75);
@@ -465,69 +499,83 @@ function buildGlucoseChart(snapshot: DashboardSnapshot | null, healthProfile: He
     const influence = index >= 5 && index <= 8 ? 0.8 : 0.55;
     return clamp(value + averageOffset + currentOffset * influence, 3.8, 8.6);
   });
-  const anchoredValues = interpolateAnchors(anchorValues, pointCount).map((value) => clamp(value, 3.8, 8.6));
-  const range = Math.max(...anchoredValues) - Math.min(...anchoredValues);
-  const points = anchoredValues.map((value, index) => ({
-    label: buildChartTimeLabel(index),
-    value: Number(value.toFixed(1))
+  const points = anchorValues.map((value, index) => ({
+    label: `${index * 2}:00`,
+    value: Number(value.toFixed(1)),
+    pointType: index === 0 ? "measured_anchor" : "forecast"
   }));
-  const averageValue = Number(average(anchoredValues).toFixed(1));
-  const markerIndexes = anchorValues.map((_, index) => index * 4).filter((index) => index < pointCount);
+  const ticks = buildYAxisTicks(anchorValues);
+  const range = Math.max(...anchorValues) - Math.min(...anchorValues);
 
   return {
     points,
-    minValue: GLUCOSE_Y_TICKS[GLUCOSE_Y_TICKS.length - 1],
-    maxValue: GLUCOSE_Y_TICKS[0],
-    splitIndex: GLUCOSE_SPLIT_INDEX,
-    xLabels: Array.from({ length: 6 }, (_, index) => formatChartHourLabel(index * 4)),
-    yTicks: GLUCOSE_Y_TICKS,
-    markerIndexes,
-    averageValue,
-    stabilityText: range <= 1.8 ? "趋势稳定" : range <= 2.6 ? "轻微波动" : "波动偏大"
+    minValue: ticks[ticks.length - 1],
+    maxValue: ticks[0],
+    splitIndex: 6,
+    xLabels: ["0h", "4h", "8h", "12h", "16h", "24h"],
+    yTicks: ticks,
+    markerIndexes: [0, 2, 4, 6, 8, 10, 12],
+    footerText: `均值 ${average(anchorValues).toFixed(1)} mmol/L，${range <= 1.8 ? "趋势稳定" : range <= 2.6 ? "轻微波动" : "波动偏大"}。`
   };
 }
 
-function resolveCurrentChartIndex(focusDate: string | undefined, pointCount: number) {
-  const midpointIndex = GLUCOSE_SPLIT_INDEX;
+function formatHistoryAxisLabel(date: string) {
+  const [, month = "0", day = "0"] = date.split("-");
+  return `${Number(month)}/${Number(day)}`;
+}
 
-  if (!focusDate || focusDate !== getTodayString()) {
-    return midpointIndex;
+function buildHistoryXAxisLabels(history: DashboardSnapshot["history"]) {
+  if (history.length <= 4) {
+    return history.map((item) => formatHistoryAxisLabel(item.date));
   }
 
-  const now = new Date();
-  const startMinutes = GLUCOSE_CHART_START_HOUR * 60;
-  const endMinutes = GLUCOSE_CHART_END_HOUR * 60;
-  const totalMinutes = now.getHours() * 60 + now.getMinutes();
-  const clampedMinutes = clamp(totalMinutes, startMinutes, endMinutes);
-  return clamp(Math.round((clampedMinutes - startMinutes) / GLUCOSE_CHART_STEP_MINUTES), 0, pointCount - 1);
+  const targetIndexes = new Set([0, Math.round((history.length - 1) / 3), Math.round(((history.length - 1) * 2) / 3), history.length - 1]);
+  return Array.from(targetIndexes)
+    .sort((left, right) => left - right)
+    .map((index) => formatHistoryAxisLabel(history[index].date));
 }
 
-function buildChartTimeLabel(index: number) {
-  const totalMinutes = GLUCOSE_CHART_START_HOUR * 60 + index * GLUCOSE_CHART_STEP_MINUTES;
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return `${`${hours}`.padStart(2, "0")}:${`${minutes}`.padStart(2, "0")}`;
+function buildHistoryFooter(values: number[], sampleCount: number) {
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  return `近 ${sampleCount} 次实测，均值 ${average(values).toFixed(1)} mmol/L，波动 ${(
+    maxValue - minValue
+  ).toFixed(1)}。`;
 }
 
-function formatChartHourLabel(hour: number) {
-  const suffix = hour >= 12 ? "PM" : "AM";
-  const normalizedHour = hour % 12 === 0 ? 12 : hour % 12;
-  return `${normalizedHour} ${suffix}`;
+function buildForecastFooter(snapshot: DashboardSnapshot | null, values: number[]) {
+  const parts = [`均值 ${average(values).toFixed(1)} mmol/L`];
+  if (snapshot?.glucoseRiskLevel) {
+    parts.push(`风险 ${snapshot.glucoseRiskLevel}`);
+  }
+  if (typeof snapshot?.peakGlucoseMmol === "number") {
+    const peakTime = typeof snapshot?.peakHourOffset === "number" ? ` @ +${snapshot.peakHourOffset}h` : "";
+    parts.push(`峰值 ${snapshot.peakGlucoseMmol.toFixed(1)}${peakTime}`);
+  }
+  if (typeof snapshot?.returnToBaselineHourOffset === "number") {
+    parts.push(`约 +${snapshot.returnToBaselineHourOffset}h 回基线`);
+  }
+  if (snapshot?.calibrationApplied) {
+    parts.push("已校准");
+  }
+  return parts.join("，") + "。";
 }
 
-function interpolateAnchors(anchorValues: readonly number[], pointCount: number) {
-  const lastAnchorIndex = anchorValues.length - 1;
-  const stepsPerSegment = (pointCount - 1) / lastAnchorIndex;
+function buildForecastXAxisLabels(forecast: GlucoseForecastPoint[]) {
+  const lastHour = Math.max(...forecast.map((point) => point.hourOffset), 0);
+  const checkpoints = new Set([0, Math.round(lastHour / 4), Math.round(lastHour / 2), Math.round((lastHour * 3) / 4), lastHour]);
+  return Array.from(checkpoints)
+    .sort((left, right) => left - right)
+    .map((hour) => (hour === 0 ? "现在" : `+${hour}h`));
+}
 
-  return Array.from({ length: pointCount }, (_, pointIndex) => {
-    const rawSegment = pointIndex / stepsPerSegment;
-    const startSegment = Math.floor(rawSegment);
-    const endSegment = Math.min(lastAnchorIndex, startSegment + 1);
-    const segmentProgress = rawSegment - startSegment;
-    const startValue = anchorValues[startSegment] ?? anchorValues[lastAnchorIndex];
-    const endValue = anchorValues[endSegment] ?? anchorValues[lastAnchorIndex];
-    return startValue + (endValue - startValue) * segmentProgress;
-  });
+function buildYAxisTicks(values: number[]) {
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const step = Math.max(1, Math.ceil((maxValue - minValue + 1.2) / 3));
+  const bottom = Math.max(3, Math.floor(minValue) - 1);
+  const top = Math.max(bottom + step * 3, Math.ceil(maxValue) + 1);
+  return [top, top - step, top - step * 2, top - step * 3];
 }
 
 function resolveCalorieTarget(healthProfile: HealthProfile | null) {
@@ -551,7 +599,6 @@ function average(values: number[]) {
   if (values.length === 0) {
     return 0;
   }
-
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
@@ -559,325 +606,61 @@ function clamp(value: number, min = 0, max = 1) {
   if (Number.isNaN(value)) {
     return min;
   }
-
   return Math.min(max, Math.max(min, value));
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: colors.background
-  },
-  content: {
-    paddingHorizontal: layout.pageHorizontal,
-    paddingTop: layout.pageTop,
-    paddingBottom: layout.pageBottom,
-    gap: spacing.lg
-  },
-  heroCard: {
-    borderRadius: radii.lg,
-    borderWidth: borders.standard,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    padding: spacing.lg,
-    gap: spacing.md,
-    ...shadows.card
-  },
-  heroCardPressed: {
-    opacity: 0.94
-  },
-  heroHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.sm
-  },
-  heroBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    borderRadius: radii.pill,
-    backgroundColor: colors.primarySoft,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6
-  },
-  heroBadgeText: {
-    color: colors.primary,
-    fontSize: typography.caption,
-    fontWeight: "700"
-  },
-  heroTimestamp: {
-    color: colors.textSoft,
-    fontSize: typography.caption
-  },
-  heroTitle: {
-    color: colors.text,
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: "800"
-  },
-  heroSummary: {
-    color: colors.textMuted,
-    fontSize: typography.body,
-    lineHeight: 24
-  },
-  heroFooter: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.md
-  },
-  parameterPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    borderRadius: radii.pill,
-    backgroundColor: colors.primarySoft,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 8
-  },
-  parameterPillText: {
-    color: colors.primary,
-    fontSize: typography.label,
-    fontWeight: "700"
-  },
-  detailLink: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xxs
-  },
-  detailLinkText: {
-    color: colors.primary,
-    fontSize: typography.label,
-    fontWeight: "700"
-  },
-  sectionHeader: {
-    gap: spacing.xxs
-  },
-  sectionEyebrow: {
-    color: colors.textSoft,
-    fontSize: typography.caption,
-    fontWeight: "700",
-    letterSpacing: 0.3
-  },
-  sectionTitle: {
-    color: colors.text,
-    fontSize: typography.titleSmall,
-    lineHeight: 30,
-    fontWeight: "800"
-  },
-  metricGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
-  },
-  metricCard: {
-    width: "48%",
-    minWidth: 154,
-    flexGrow: 1,
-    borderRadius: radii.lg,
-    borderWidth: borders.standard,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    padding: spacing.md,
-    gap: spacing.md,
-    ...shadows.card
-  },
-  metricCardWide: {
-    width: "100%",
-    borderRadius: radii.lg,
-    borderWidth: borders.standard,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    padding: spacing.md,
-    gap: spacing.md,
-    ...shadows.card
-  },
-  metricHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md
-  },
-  metricIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: colors.primarySoft,
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  metricHeaderCopy: {
-    flex: 1,
-    gap: 2
-  },
-  metricLabel: {
-    color: colors.text,
-    fontSize: typography.bodyLarge,
-    fontWeight: "800"
-  },
-  metricDescriptor: {
-    color: colors.textSoft,
-    fontSize: typography.caption,
-    lineHeight: 18
-  },
-  metricRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.md
-  },
-  metricValueBlock: {
-    flex: 1,
-    gap: spacing.xs
-  },
-  metricValueText: {
-    color: colors.text,
-    fontSize: 40,
-    lineHeight: 44,
-    fontWeight: "800",
-    letterSpacing: -0.5
-  },
-  metricUnitText: {
-    color: colors.textSoft,
-    fontSize: typography.caption,
-    fontWeight: "600"
-  },
-  metricStatusText: {
-    color: colors.textMuted,
-    fontSize: typography.label,
-    lineHeight: 20,
-    fontWeight: "600"
-  },
-  metricHelperText: {
-    color: colors.textSoft,
-    fontSize: typography.caption,
-    lineHeight: 18
-  },
-  ringWrap: {
-    width: 64,
-    height: 64,
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  ringCenter: {
-    position: "absolute",
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  ringPercentText: {
-    color: colors.primary,
-    fontSize: typography.caption,
-    fontWeight: "800"
-  },
-  glucoseTrendCard: {
-    width: "100%",
-    borderRadius: 24,
-    borderWidth: borders.standard,
-    borderColor: "#D9E6E7",
-    backgroundColor: "#F4FAFA",
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.md,
-    gap: spacing.md,
-    ...shadows.card
-  },
-  glucoseTrendHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: spacing.md
-  },
-  glucoseTrendTitleBlock: {
-    gap: spacing.xxs
-  },
-  glucoseTrendTitle: {
-    color: colors.text,
-    fontSize: 26,
-    lineHeight: 32,
-    fontWeight: "900"
-  },
-  glucoseTrendSubtitle: {
-    color: colors.textMuted,
-    fontSize: 17,
-    fontWeight: "600"
-  },
-  glucoseTrendUnit: {
-    color: colors.text,
-    fontSize: 17,
-    lineHeight: 24,
-    fontWeight: "700",
-    marginTop: spacing.md
-  },
-  glucoseChartBlock: {
-    gap: spacing.xs
-  },
-  glucoseChartFrame: {
-    position: "relative",
-    borderRadius: radii.md,
-    backgroundColor: "transparent",
-    overflow: "hidden"
-  },
-  glucoseSvg: {
-    width: "100%"
-  },
-  glucoseYAxis: {
-    position: "absolute",
-    top: 12,
-    right: spacing.xs,
-    bottom: 24,
-    width: 24,
-    justifyContent: "space-between",
-    alignItems: "flex-end"
-  },
-  glucoseYAxisLabel: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: "500"
-  },
-  glucoseAxisLabels: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingLeft: spacing.xxs,
-    paddingRight: 28
-  },
-  glucoseAxisLabel: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "600"
-  },
-  glucoseTrendFooter: {
-    color: colors.text,
-    fontSize: 17,
-    lineHeight: 26,
-    fontWeight: "600"
-  },
-  syncHeader: {
-    gap: spacing.sm
-  },
-  syncBadge: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    borderRadius: radii.pill,
-    backgroundColor: colors.primarySoft,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6
-  },
-  syncBadgeText: {
-    color: colors.primary,
-    fontSize: typography.caption,
-    fontWeight: "700"
-  },
-  syncTitle: {
-    color: colors.text,
-    fontSize: typography.bodyLarge,
-    fontWeight: "800"
-  },
-  syncDescription: {
-    color: colors.textMuted,
-    fontSize: typography.body,
-    lineHeight: 24
-  }
+  safeArea: { flex: 1, backgroundColor: colors.background },
+  content: { paddingHorizontal: layout.pageHorizontal, paddingTop: layout.pageTop, paddingBottom: layout.pageBottom, gap: spacing.lg },
+  heroCard: { borderRadius: radii.lg, borderWidth: borders.standard, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.lg, gap: spacing.md, ...shadows.card },
+  heroCardPressed: { opacity: 0.94 },
+  heroHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
+  heroBadge: { flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radii.pill, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.md, paddingVertical: 6 },
+  heroBadgeText: { color: colors.primary, fontSize: typography.caption, fontWeight: "700" },
+  heroTimestamp: { color: colors.textSoft, fontSize: typography.caption },
+  heroTitle: { color: colors.text, fontSize: 28, lineHeight: 34, fontWeight: "800" },
+  heroSummary: { color: colors.textMuted, fontSize: typography.body, lineHeight: 24 },
+  heroFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md },
+  parameterPill: { flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radii.pill, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.md, paddingVertical: 8 },
+  parameterPillText: { color: colors.primary, fontSize: typography.label, fontWeight: "700" },
+  detailLink: { flexDirection: "row", alignItems: "center", gap: spacing.xxs },
+  detailLinkText: { color: colors.primary, fontSize: typography.label, fontWeight: "700" },
+  sectionHeader: { gap: spacing.xxs },
+  sectionEyebrow: { color: colors.textSoft, fontSize: typography.caption, fontWeight: "700", letterSpacing: 0.3 },
+  sectionTitle: { color: colors.text, fontSize: typography.titleSmall, lineHeight: 30, fontWeight: "800" },
+  metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  metricCard: { width: "48%", minWidth: 154, flexGrow: 1, borderRadius: radii.lg, borderWidth: borders.standard, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, gap: spacing.md, ...shadows.card },
+  metricHeader: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  metricIconWrap: { width: 36, height: 36, borderRadius: 12, backgroundColor: colors.primarySoft, alignItems: "center", justifyContent: "center" },
+  metricHeaderCopy: { flex: 1, gap: 2 },
+  metricLabel: { color: colors.text, fontSize: typography.bodyLarge, fontWeight: "800" },
+  metricDescriptor: { color: colors.textSoft, fontSize: typography.caption, lineHeight: 18 },
+  metricRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md },
+  metricValueBlock: { flex: 1, gap: spacing.xs },
+  metricValueText: { color: colors.text, fontSize: 40, lineHeight: 44, fontWeight: "800", letterSpacing: -0.5 },
+  metricUnitText: { color: colors.textSoft, fontSize: typography.caption, fontWeight: "600" },
+  metricStatusText: { color: colors.textMuted, fontSize: typography.label, lineHeight: 20, fontWeight: "600" },
+  metricHelperText: { color: colors.textSoft, fontSize: typography.caption, lineHeight: 18 },
+  ringWrap: { width: 64, height: 64, alignItems: "center", justifyContent: "center" },
+  ringCenter: { position: "absolute", alignItems: "center", justifyContent: "center" },
+  ringPercentText: { color: colors.primary, fontSize: typography.caption, fontWeight: "800" },
+  glucoseTrendCard: { width: "100%", borderRadius: 24, borderWidth: borders.standard, borderColor: "#D9E6E7", backgroundColor: "#F4FAFA", paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.md, gap: spacing.md, ...shadows.card },
+  glucoseTrendHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.md },
+  glucoseTrendTitleBlock: { gap: spacing.xxs },
+  glucoseTrendTitle: { color: colors.text, fontSize: 26, lineHeight: 32, fontWeight: "900" },
+  glucoseTrendSubtitle: { color: colors.textMuted, fontSize: 17, fontWeight: "600" },
+  glucoseTrendUnit: { color: colors.text, fontSize: 17, lineHeight: 24, fontWeight: "700", marginTop: spacing.md },
+  glucoseChartBlock: { gap: spacing.xs },
+  glucoseChartFrame: { position: "relative", borderRadius: radii.md, backgroundColor: "transparent", overflow: "hidden" },
+  glucoseSvg: { width: "100%" },
+  glucoseYAxis: { position: "absolute", top: 12, right: spacing.xs, bottom: 24, width: 24, justifyContent: "space-between", alignItems: "flex-end" },
+  glucoseYAxisLabel: { color: colors.text, fontSize: 15, fontWeight: "500" },
+  glucoseAxisLabels: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingLeft: spacing.xxs, paddingRight: 28 },
+  glucoseAxisLabel: { color: colors.text, fontSize: 14, fontWeight: "600" },
+  glucoseTrendFooter: { color: colors.text, fontSize: 17, lineHeight: 26, fontWeight: "600" },
+  syncHeader: { gap: spacing.sm },
+  syncBadge: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radii.pill, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.md, paddingVertical: 6 },
+  syncBadgeText: { color: colors.primary, fontSize: typography.caption, fontWeight: "700" },
+  syncTitle: { color: colors.text, fontSize: typography.bodyLarge, fontWeight: "800" },
+  syncDescription: { color: colors.textMuted, fontSize: typography.body, lineHeight: 24 }
 });

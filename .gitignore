@@ -8,9 +8,13 @@
 /mobile/.env
 .expo/
 .npm-cache/
+.m2/
 .vscode/
 .DS_Store
 /.idea/
+/.codex-*
+/window-dump*.xml
+/*window-dump*.xml
 /.codex-*.log
 /.android-home/
 /.android-user/

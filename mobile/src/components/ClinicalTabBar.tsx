@@ -3,7 +3,7 @@ import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { useEffect, useRef, useState } from "react";
 import { Animated, Keyboard, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useImmersiveTabBar } from "../navigation/ImmersiveTabBarContext";
+import { getTabBarBottomOffset, useImmersiveTabBar } from "../navigation/ImmersiveTabBarContext";
 import { colors, layout, radii, shadows, spacing, typography } from "../theme/tokens";
 
 export function ClinicalTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
@@ -47,7 +47,7 @@ export function ClinicalTabBar({ state, descriptors, navigation }: BottomTabBarP
         style={[
           styles.wrap,
           {
-            bottom: Math.max(insets.bottom, spacing.md),
+            bottom: getTabBarBottomOffset(insets.bottom),
             opacity: animation.interpolate({
               inputRange: [0, 1],
               outputRange: [1, 0]

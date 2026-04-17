@@ -48,6 +48,8 @@ public class CareRecord {
     @Column(length = 1000)
     private String note;
 
+    private Double glucoseMmol;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

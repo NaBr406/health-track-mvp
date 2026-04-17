@@ -4,6 +4,28 @@ $rootDir = Split-Path -Parent $PSScriptRoot
 $serverDir = Join-Path $rootDir "server"
 $wrapperPropsPath = Join-Path $serverDir ".mvn\wrapper\maven-wrapper.properties"
 $defaultJavaHome = "D:\Program Files\Android\Android Studio\jbr"
+$envFilePath = Join-Path $rootDir ".env"
+$projectMavenSettingsPath = Join-Path $rootDir ".codex-maven-settings.xml"
+
+if (Test-Path $envFilePath) {
+  Get-Content $envFilePath | ForEach-Object {
+    $line = $_.Trim()
+    if (-not $line -or $line.StartsWith("#")) {
+      return
+    }
+
+    $parts = $line -split "=", 2
+    if ($parts.Count -ne 2) {
+      return
+    }
+
+    $name = $parts[0].Trim()
+    $value = $parts[1].Trim()
+    if ($name) {
+      [System.Environment]::SetEnvironmentVariable($name, $value, "Process")
+    }
+  }
+}
 
 if (-not (Test-Path $wrapperPropsPath)) {
   throw "Missing Maven wrapper properties: $wrapperPropsPath"
@@ -25,8 +47,24 @@ $zipPath = Join-Path $distDir $zipName
 $extractName = [System.IO.Path]::GetFileNameWithoutExtension($zipName) -replace "-bin$", ""
 $mavenHome = Join-Path $distDir $extractName
 $mvnCmd = Join-Path $mavenHome "bin\mvn.cmd"
+$globalWrapperRoot = Join-Path $env:USERPROFILE ".m2\wrapper\dists"
 
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+
+if (-not (Test-Path $mvnCmd) -and (Test-Path $globalWrapperRoot)) {
+  $existingMvnCmd = Get-ChildItem -Path $globalWrapperRoot -Recurse -Filter "mvn.cmd" -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -like "*$extractName*" } |
+    Select-Object -First 1
+
+  if ($existingMvnCmd) {
+    $existingMavenHome = Split-Path -Parent (Split-Path -Parent $existingMvnCmd.FullName)
+    if (Test-Path $existingMavenHome) {
+      Write-Host "[health-track] Reusing existing Maven distribution: $existingMavenHome" -ForegroundColor DarkGray
+      Remove-Item -LiteralPath $mavenHome -Recurse -Force -ErrorAction SilentlyContinue
+      Copy-Item -LiteralPath $existingMavenHome -Destination $mavenHome -Recurse -Force
+    }
+  }
+}
 
 if (-not (Test-Path $zipPath)) {
   Write-Host "[health-track] Downloading Maven distribution..." -ForegroundColor Cyan
@@ -59,7 +97,12 @@ if (-not $env:SPRING_PROFILES_ACTIVE) {
 
 Push-Location $serverDir
 try {
-  & $mvnCmd spring-boot:run
+  $mavenArgs = @()
+  if (Test-Path $projectMavenSettingsPath) {
+    $mavenArgs += @("-s", $projectMavenSettingsPath)
+  }
+  $mavenArgs += "spring-boot:run"
+  & $mvnCmd @mavenArgs
 } finally {
   Pop-Location
 }

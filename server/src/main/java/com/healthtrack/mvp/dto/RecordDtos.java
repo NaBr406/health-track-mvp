@@ -66,7 +66,8 @@ public final class RecordDtos {
             @NotBlank String itemName,
             @Min(0) Integer durationMinutes,
             String status,
-            String note
+            String note,
+            Double glucoseMmol
     ) {
     }
 
@@ -78,6 +79,7 @@ public final class RecordDtos {
             Integer durationMinutes,
             String status,
             String note,
+            Double glucoseMmol,
             LocalDateTime createdAt
     ) {
     }

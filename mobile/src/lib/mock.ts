@@ -31,11 +31,11 @@ export const mockHealthProfile: HealthProfile = {
 };
 
 export const mockMonitoringHistory: MonitoringHistoryPoint[] = [
-  { date: getDateOffsetString(-6), calories: 1760, exerciseMinutes: 24, steps: 5280, sleepHours: 6.4, glucoseMmol: 7.8 },
-  { date: getDateOffsetString(-5), calories: 1680, exerciseMinutes: 36, steps: 6840, sleepHours: 7.1, glucoseMmol: 7.1 },
-  { date: getDateOffsetString(-4), calories: 1825, exerciseMinutes: 18, steps: 4620, sleepHours: 6.0, glucoseMmol: 8.2 },
-  { date: getDateOffsetString(-3), calories: 1710, exerciseMinutes: 42, steps: 7210, sleepHours: 7.4, glucoseMmol: 7.0 },
-  { date: getDateOffsetString(-2), calories: 1595, exerciseMinutes: 31, steps: 6030, sleepHours: 6.8, glucoseMmol: 7.3 },
-  { date: getDateOffsetString(-1), calories: 1660, exerciseMinutes: 28, steps: 5860, sleepHours: 6.9, glucoseMmol: 7.4 },
-  { date: getTodayString(), calories: 1480, exerciseMinutes: 22, steps: 4380, sleepHours: 6.2, glucoseMmol: 7.9 }
+  { date: getDateOffsetString(-6), calories: 1760, exerciseMinutes: 24, steps: 5280, sleepHours: 6.4, glucoseMmol: 7.8, glucoseSource: "recorded" },
+  { date: getDateOffsetString(-5), calories: 1680, exerciseMinutes: 36, steps: 6840, sleepHours: 7.1, glucoseMmol: 7.1, glucoseSource: "recorded" },
+  { date: getDateOffsetString(-4), calories: 1825, exerciseMinutes: 18, steps: 4620, sleepHours: 6.0, glucoseMmol: 8.2, glucoseSource: "recorded" },
+  { date: getDateOffsetString(-3), calories: 1710, exerciseMinutes: 42, steps: 7210, sleepHours: 7.4, glucoseMmol: 7.0, glucoseSource: "recorded" },
+  { date: getDateOffsetString(-2), calories: 1595, exerciseMinutes: 31, steps: 6030, sleepHours: 6.8, glucoseMmol: 7.3, glucoseSource: "recorded" },
+  { date: getDateOffsetString(-1), calories: 1660, exerciseMinutes: 28, steps: 5860, sleepHours: 6.9, glucoseMmol: 7.4, glucoseSource: "recorded" },
+  { date: getTodayString(), calories: 1480, exerciseMinutes: 22, steps: 4380, sleepHours: 6.2, glucoseMmol: 7.9, glucoseSource: "recorded" }
 ];
