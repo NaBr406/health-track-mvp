@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
-import { Animated, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Animated, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "../../lib/api";
 import { formatTime, getTodayString } from "../../lib/utils";
@@ -33,7 +33,7 @@ export function AIChatScreen({
 
   useEffect(() => {
     void loadThread();
-  }, [healthProfile?.updatedAt]);
+  }, [healthProfile?.updatedAt, session?.userId]);
 
   useEffect(() => {
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
@@ -50,7 +50,7 @@ export function AIChatScreen({
 
     if (!content) {
       if (inputMode === "voice") {
-        setCapabilityNote("语音入口已预留，接入录音与转写后会直接把语音内容发送到今天的对话。");
+        setCapabilityNote("语音入口已预留，接入录音与转写后会直接发送到今天的对话中。");
       }
 
       return;
@@ -70,12 +70,14 @@ export function AIChatScreen({
       setDataSource(result.dataSource);
       setDraft("");
       onConversationCommitted();
+    } catch {
+      Alert.alert("发送失败", "这条记录还没有写入云端，所以不会出现在其他设备上。请检查网络后重试。");
     } finally {
       setSending(false);
     }
   }
 
-  const threadHint = dataSource === "server" ? "消息已连接云端" : "当前为本地离线记录";
+  const threadHint = dataSource === "server" ? "当前展示的是账号专属对话数据" : "当前展示的是本地身份空间中的对话记录";
   const voiceButtonDisabled = sending;
   const sendButtonDisabled = sending || !draft.trim();
   const composerPaddingBottom = Platform.OS === "ios" ? Math.max(insets.bottom, spacing.xs) : spacing.xs;
@@ -156,13 +158,13 @@ export function AIChatScreen({
 
             {!session ? (
               <View style={styles.guestRow}>
-                <Text style={styles.guestText}>访客模式也能继续记录，登录后再同步到云端。</Text>
+                <Text style={styles.guestText}>游客模式也能继续记录；登录后会直接切换到该账号自己的数据空间。</Text>
                 <Pressable
                   accessibilityRole="button"
                   onPress={onRequestSignIn}
                   style={({ pressed }) => [styles.guestLink, pressed ? styles.iconButtonPressed : null]}
                 >
-                  <Text style={styles.guestLinkText}>登录同步</Text>
+                  <Text style={styles.guestLinkText}>登录账号</Text>
                 </Pressable>
               </View>
             ) : null}

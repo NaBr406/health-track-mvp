@@ -57,7 +57,7 @@ export type MonitoringHistoryPoint = {
   exerciseMinutes: number;
   steps: number;
   sleepHours: number;
-  glucoseMmol: number;
+  glucoseMmol?: number | null;
   glucoseSource?: "recorded" | "derived" | "default" | string | null;
 };
 

@@ -36,7 +36,7 @@ export function ClinicalTabBar({ state, descriptors, navigation }: BottomTabBarP
     }).start();
   }, [animation, shouldHide]);
 
-  if (nestedRouteName === "AdjustmentDetail") {
+  if (nestedRouteName === "AdjustmentDetail" || nestedRouteName === "ProfileDetail" || nestedRouteName === "ProfileSettings") {
     return null;
   }
 

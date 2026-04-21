@@ -35,6 +35,10 @@ public class ProfileService {
         if (StringUtils.hasText(request.nickname())) {
             user.setNickname(request.nickname().trim());
         }
+        if (StringUtils.hasText(request.avatarPresetId())) {
+            profile.setAvatarPresetId(request.avatarPresetId().trim());
+        }
+        profile.setAvatarUri(StringUtils.hasText(request.avatarUri()) ? request.avatarUri().trim() : null);
         if (StringUtils.hasText(request.conditionLabel())) {
             profile.setConditionLabel(request.conditionLabel().trim());
         }
@@ -106,6 +110,8 @@ public class ProfileService {
         return new ProfileResponse(
                 user.getEmail(),
                 user.getNickname(),
+                profile.getAvatarPresetId(),
+                profile.getAvatarUri(),
                 profile.getConditionLabel(),
                 profile.getFastingGlucoseBaseline(),
                 profile.getBloodPressureBaseline(),

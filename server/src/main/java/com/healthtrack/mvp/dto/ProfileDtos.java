@@ -10,6 +10,8 @@ public final class ProfileDtos {
 
     public record ProfileRequest(
             String nickname,
+            String avatarPresetId,
+            String avatarUri,
             String conditionLabel,
             String fastingGlucoseBaseline,
             String bloodPressureBaseline,
@@ -31,6 +33,8 @@ public final class ProfileDtos {
     public record ProfileResponse(
             String email,
             String nickname,
+            String avatarPresetId,
+            String avatarUri,
             String conditionLabel,
             String fastingGlucoseBaseline,
             String bloodPressureBaseline,

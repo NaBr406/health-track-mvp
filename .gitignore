@@ -21,9 +21,11 @@
 /mobile/android/.gradle
 /mobile/android/.cxx
 /mobile/android/app/build
+/mobile/.gradle-user-home/
 /mobile/android/local.properties
 /server/.mvn/dist/
 /server/data/
+/artifacts/android/*.apk
 /emulator-*.png
 /view.xml
 /mobile/.codex-metro*.log

@@ -3,11 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import { DefaultTheme, NavigationContainer } from "@react-navigation/native";
 import type { NavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { clearStoredSession, loadStoredSession, saveStoredSession } from "./src/lib/auth";
+import { api } from "./src/lib/api";
 import { loadStoredHealthProfile } from "./src/lib/healthProfileStorage";
+import { loadOnboardingGatePassed, saveOnboardingGatePassed } from "./src/lib/onboardingGate";
 import { MainTabsNavigator } from "./src/navigation/MainTabsNavigator";
 import { LoginScreen } from "./src/screens/LoginScreen";
 import { OnboardingWizardScreen } from "./src/screens/OnboardingWizardScreen";
@@ -36,6 +38,16 @@ const navigationTheme = {
   }
 };
 
+function hasCompletedHealthProfile(profile: HealthProfile | null) {
+  return Boolean(
+    profile?.nickname.trim() &&
+      profile.conditionLabel.trim() &&
+      profile.primaryTarget.trim() &&
+      profile.fastingGlucoseBaseline?.trim() &&
+      profile.bloodPressureBaseline?.trim()
+  );
+}
+
 export default function App() {
   const [booting, setBooting] = useState(true);
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -47,11 +59,14 @@ export default function App() {
 
   useEffect(() => {
     async function bootstrap() {
-      const [storedSession, storedProfile] = await Promise.all([loadStoredSession(), loadStoredHealthProfile()]);
+      const storedSession = await loadStoredSession();
+      const storedProfile = storedSession ? await loadStoredHealthProfile(storedSession) : null;
+      const resolvedProfile = storedSession ? await api.getHealthProfile(storedSession) : storedProfile;
+      const onboardingGatePassed = storedSession ? await loadOnboardingGatePassed(storedSession) : false;
 
       setSession(storedSession);
-      setHealthProfile(storedProfile);
-      setHasOnboarded(Boolean(storedProfile));
+      setHealthProfile(resolvedProfile);
+      setHasOnboarded(Boolean(storedSession) && (onboardingGatePassed || hasCompletedHealthProfile(resolvedProfile)));
       setBooting(false);
     }
 
@@ -60,19 +75,55 @@ export default function App() {
 
   async function handleSignedIn(nextSession: AuthSession) {
     await saveStoredSession(nextSession);
+    const accountProfile = await api.getHealthProfile(nextSession);
+    const onboardingGatePassed = await loadOnboardingGatePassed(nextSession);
+
     setSession(nextSession);
+    setHealthProfile(accountProfile);
+    setHasOnboarded(onboardingGatePassed || hasCompletedHealthProfile(accountProfile));
+    setRefreshToken((current) => current + 1);
     setAuthOpen(false);
+
+    navigationRef.current?.resetRoot({
+      index: 0,
+      routes: [
+        onboardingGatePassed || hasCompletedHealthProfile(accountProfile)
+          ? { name: "Main" }
+          : {
+              name: "Onboarding",
+              params: {
+                mode: "initial"
+              }
+            }
+      ]
+    });
   }
 
   async function handleLogout() {
     await clearStoredSession();
+
     setSession(null);
+    setHealthProfile(null);
+    setHasOnboarded(false);
+    setRefreshToken((current) => current + 1);
+
+    navigationRef.current?.resetRoot({
+      index: 0,
+      routes: [{ name: "Main" }]
+    });
   }
 
   async function handleOnboardingComplete(profile: HealthProfile) {
-    const editingExisting = hasOnboarded;
+    const editingExisting = hasCompletedHealthProfile(healthProfile);
+
+    if (session) {
+      await saveOnboardingGatePassed(session);
+    }
+
     setHealthProfile(profile);
     setHasOnboarded(true);
+
+    Alert.alert(editingExisting ? "资料已更新" : "健康档案完善成功");
 
     if (editingExisting) {
       navigationRef.current?.goBack();
@@ -87,7 +138,19 @@ export default function App() {
 
   function openOnboardingEditor() {
     navigationRef.current?.navigate("Onboarding", {
-      mode: "edit"
+      mode: hasCompletedHealthProfile(healthProfile) ? "edit" : "initial"
+    });
+  }
+
+  async function handleSkipOnboarding() {
+    if (session) {
+      await saveOnboardingGatePassed(session);
+    }
+
+    setHasOnboarded(true);
+    navigationRef.current?.resetRoot({
+      index: 0,
+      routes: [{ name: "Main" }]
     });
   }
 
@@ -109,7 +172,7 @@ export default function App() {
         ) : (
           <NavigationContainer ref={navigationRef} theme={navigationTheme}>
             <Stack.Navigator
-              initialRouteName={hasOnboarded ? "Main" : "Onboarding"}
+              initialRouteName={session && !hasOnboarded ? "Onboarding" : "Main"}
               screenOptions={{
                 animation: "fade",
                 contentStyle: { backgroundColor: colors.background },
@@ -129,20 +192,23 @@ export default function App() {
                   />
                 )}
               </Stack.Screen>
-              <Stack.Screen name="Onboarding">
-                {(screenProps) => (
-                  <OnboardingWizardScreen
-                    initialProfile={healthProfile}
-                    mode={screenProps.route.params?.mode ?? (hasOnboarded ? "edit" : "initial")}
-                    onCancel={() => {
-                      if (hasOnboarded) {
-                        screenProps.navigation.goBack();
-                      }
-                    }}
-                    onComplete={handleOnboardingComplete}
-                  />
-                )}
-              </Stack.Screen>
+              {session ? (
+                <Stack.Screen name="Onboarding">
+                  {(screenProps) => (
+                    <OnboardingWizardScreen
+                      initialProfile={healthProfile}
+                      mode={screenProps.route.params?.mode ?? (hasOnboarded ? "edit" : "initial")}
+                      onCancel={() => {
+                        if (hasOnboarded) {
+                          screenProps.navigation.goBack();
+                        }
+                      }}
+                      onComplete={handleOnboardingComplete}
+                      onSkip={handleSkipOnboarding}
+                    />
+                  )}
+                </Stack.Screen>
+              ) : null}
             </Stack.Navigator>
           </NavigationContainer>
         )}

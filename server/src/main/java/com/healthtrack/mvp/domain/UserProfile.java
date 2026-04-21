@@ -7,6 +7,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.Lob;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -57,6 +58,12 @@ public class UserProfile {
 
     @Column(length = 120)
     private String conditionLabel;
+
+    @Column(length = 40)
+    private String avatarPresetId;
+
+    @Lob
+    private String avatarUri;
 
     @Column(length = 120)
     private String fastingGlucoseBaseline;

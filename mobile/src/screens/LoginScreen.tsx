@@ -45,9 +45,9 @@ export function LoginScreen({ onClose, onSignedIn }: LoginScreenProps) {
       >
         <Panel style={styles.sheet}>
           <SectionHeader
-            eyebrow="账户同步"
-            title="登录只负责同步，不再承载日常录入"
-            description="你可以先以访客模式完成建档和对话记录。登录仅在需要跨设备同步时再启用。"
+            eyebrow="账号切换"
+            title="登录后直接进入该账号的专属数据空间"
+            description="当前未登录时会使用游客模式。游客数据与账号数据彼此隔离，且游客模式下不提供建档入口；登录后才能创建或编辑账号档案。"
             trailing={<OutlineButton compact label="关闭" onPress={onClose} variant="ghost" />}
           />
 
@@ -83,7 +83,7 @@ export function LoginScreen({ onClose, onSignedIn }: LoginScreenProps) {
 
           <OutlineButton
             disabled={loading}
-            label={loading ? "处理中..." : mode === "login" ? "登录并继续" : "创建账号并继续"}
+            label={loading ? "处理中..." : mode === "login" ? "登录并进入账号数据" : "创建账号并继续"}
             onPress={() => void handleSubmit()}
             variant="primary"
           />

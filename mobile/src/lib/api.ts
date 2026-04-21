@@ -1,16 +1,15 @@
 import { loadToken } from "./auth";
+import { getDataScopeKey, loadDataScope } from "./dataScope";
 import { loadStoredHealthProfile, saveStoredHealthProfile } from "./healthProfileStorage";
-import { mockHealthProfile, mockSession } from "./mock";
 import {
   getFallbackChatThread,
   getFallbackDashboardSnapshot,
   getFallbackHealthProfile,
-  hydrateFallbackProfile,
+  getFallbackRecordedGlucosePoints,
   saveFallbackHealthProfile,
   sendFallbackChatMessage,
   submitFallbackDashboardFeedback
 } from "./mockStore";
-import { getTodayString, parseLeadingNumber } from "./utils";
 import type {
   AuthSession,
   ChatThread,
@@ -21,7 +20,8 @@ import type {
   HealthProfile
 } from "../types";
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || "";
+const RELEASE_API_BASE_URL = "http://150.158.117.174";
+const API_BASE_URL = __DEV__ ? process.env.EXPO_PUBLIC_API_BASE_URL || RELEASE_API_BASE_URL : RELEASE_API_BASE_URL;
 
 type LoginPayload = {
   email: string;
@@ -37,6 +37,8 @@ type RegisterPayload = {
 type ServerProfileResponse = {
   email?: string | null;
   nickname?: string | null;
+  avatarPresetId?: string | null;
+  avatarUri?: string | null;
   conditionLabel?: string | null;
   fastingGlucoseBaseline?: string | null;
   bloodPressureBaseline?: string | null;
@@ -53,33 +55,17 @@ type ServerProfileResponse = {
   updatedAt?: string | null;
 };
 
-type ServerDashboardResponse = {
-  focusDate: string;
-  dietCount: number;
-  exerciseCount: number;
-  careCount: number;
-  totalCalories: number;
-  totalExerciseMinutes: number;
-  totalCareMinutes: number;
-  dailyCalorieGoal: number;
-  weeklyExerciseGoalMinutes: number;
-  goalCompletionRate: number;
-  weeklyActivity: Array<{
-    date: string;
-    calories: number;
-    exerciseMinutes: number;
-    careMinutes: number;
-  }>;
-  latestAdvice: string;
+type ServerCareRecordResponse = {
+  recordedOn: string;
+  glucoseMmol?: number | null;
 };
 
-type ServerAdviceResponse = {
-  adviceDate: string;
-  adviceText: string;
-  source: string;
-  status: string;
-  generatedAt: string;
+type DataIdentity = {
+  session: AuthSession | null;
+  scopeKey: string;
 };
+
+const glucoseRecoveryTasks = new Map<string, Promise<void>>();
 
 function buildUrl(path: string) {
   return `${API_BASE_URL}${path}`;
@@ -98,8 +84,22 @@ function buildQuery(params: Record<string, string | undefined>) {
   return queryString ? `?${queryString}` : "";
 }
 
-async function request<T>(path: string, init: RequestInit = {}, fallback?: T | (() => T)): Promise<T> {
-  const resolveFallback = () => (typeof fallback === "function" ? (fallback as () => T)() : fallback);
+function hasText(value?: string | null): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function normalizeText(value?: string | null) {
+  return hasText(value) ? value.trim() : null;
+}
+
+async function request<T>(path: string, init: RequestInit = {}, fallback?: T | (() => T | Promise<T>)): Promise<T> {
+  const resolveFallback = async () => {
+    if (typeof fallback === "function") {
+      return (fallback as () => T | Promise<T>)();
+    }
+
+    return fallback as T;
+  };
 
   try {
     const token = await loadToken();
@@ -120,17 +120,231 @@ async function request<T>(path: string, init: RequestInit = {}, fallback?: T | (
     }
 
     if (response.status === 204) {
-      return resolveFallback() as T;
+      return (await resolveFallback()) as T;
     }
 
     return (await response.json()) as T;
   } catch (error) {
     if (fallback !== undefined) {
-      return resolveFallback() as T;
+      return (await resolveFallback()) as T;
     }
 
     throw error;
   }
+}
+
+async function resolveIdentity(sessionOverride?: AuthSession | null): Promise<DataIdentity> {
+  if (sessionOverride !== undefined) {
+    return {
+      session: sessionOverride,
+      scopeKey: getDataScopeKey(sessionOverride)
+    };
+  }
+
+  return loadDataScope();
+}
+
+function mergeServerProfile(remote: ServerProfileResponse, stored: HealthProfile | null, session: AuthSession | null): HealthProfile {
+  const now = new Date().toISOString();
+
+  return {
+    email: remote.email ?? stored?.email ?? session?.email ?? null,
+    nickname: remote.nickname ?? stored?.nickname ?? session?.nickname ?? "",
+    avatarPresetId: normalizeText(remote.avatarPresetId) ?? stored?.avatarPresetId ?? null,
+    avatarUri: normalizeText(remote.avatarUri) ?? stored?.avatarUri ?? null,
+    conditionLabel: remote.conditionLabel ?? stored?.conditionLabel ?? "",
+    fastingGlucoseBaseline: remote.fastingGlucoseBaseline ?? stored?.fastingGlucoseBaseline ?? null,
+    bloodPressureBaseline: remote.bloodPressureBaseline ?? stored?.bloodPressureBaseline ?? null,
+    restingHeartRate: remote.restingHeartRate ?? stored?.restingHeartRate ?? null,
+    medicationPlan: remote.medicationPlan ?? stored?.medicationPlan ?? null,
+    notes: remote.notes ?? stored?.notes ?? null,
+    age: remote.age ?? stored?.age ?? null,
+    biologicalSex: remote.gender ?? stored?.biologicalSex ?? null,
+    heightCm: remote.heightCm ?? stored?.heightCm ?? null,
+    weightKg: remote.weightKg ?? stored?.weightKg ?? null,
+    targetWeightKg: remote.targetWeightKg ?? stored?.targetWeightKg ?? null,
+    careFocus: remote.careFocus ?? stored?.careFocus ?? null,
+    primaryTarget: remote.healthGoal ?? stored?.primaryTarget ?? "",
+    updatedAt: remote.updatedAt ?? stored?.updatedAt ?? now,
+    completedAt: stored?.completedAt ?? now
+  };
+}
+
+function buildServerProfilePayload(profile: HealthProfile) {
+  return {
+    nickname: profile.nickname.trim(),
+    avatarPresetId: normalizeText(profile.avatarPresetId),
+    avatarUri: normalizeText(profile.avatarUri),
+    conditionLabel: profile.conditionLabel.trim(),
+    fastingGlucoseBaseline: normalizeText(profile.fastingGlucoseBaseline),
+    bloodPressureBaseline: normalizeText(profile.bloodPressureBaseline),
+    restingHeartRate: profile.restingHeartRate ?? null,
+    medicationPlan: normalizeText(profile.medicationPlan),
+    notes: normalizeText(profile.notes),
+    age: profile.age ?? null,
+    gender: normalizeText(profile.biologicalSex),
+    heightCm: profile.heightCm ?? null,
+    weightKg: profile.weightKg ?? null,
+    targetWeightKg: profile.targetWeightKg ?? null,
+    careFocus: normalizeText(profile.careFocus),
+    healthGoal: profile.primaryTarget.trim()
+  };
+}
+
+function hasRecoverableStoredProfile(profile: HealthProfile | null) {
+  if (!profile) {
+    return false;
+  }
+
+  return Boolean(
+    normalizeText(profile.avatarPresetId) ||
+      normalizeText(profile.avatarUri) ||
+      profile.nickname.trim() ||
+      profile.conditionLabel.trim() ||
+      profile.primaryTarget.trim() ||
+      normalizeText(profile.fastingGlucoseBaseline) ||
+      profile.weightKg != null ||
+      profile.targetWeightKg != null ||
+      profile.heightCm != null ||
+      profile.age != null ||
+      normalizeText(profile.medicationPlan) ||
+      normalizeText(profile.notes)
+  );
+}
+
+function isRemoteProfileEffectivelyEmpty(remote: ServerProfileResponse) {
+  const meaningfulFields = [
+    normalizeText(remote.conditionLabel) && normalizeText(remote.conditionLabel) !== "condition-pending",
+    normalizeText(remote.healthGoal),
+    normalizeText(remote.fastingGlucoseBaseline),
+    normalizeText(remote.bloodPressureBaseline),
+    normalizeText(remote.careFocus),
+    normalizeText(remote.medicationPlan),
+    remote.weightKg != null,
+    remote.targetWeightKg != null,
+    remote.heightCm != null,
+    remote.age != null
+  ];
+
+  return meaningfulFields.filter(Boolean).length === 0;
+}
+
+function shouldRecoverServerProfile(remote: ServerProfileResponse, stored: HealthProfile | null, merged: HealthProfile) {
+  if (!hasRecoverableStoredProfile(stored)) {
+    return false;
+  }
+
+  const needsAvatarRecovery = Boolean(
+    (normalizeText(merged.avatarPresetId) || normalizeText(merged.avatarUri)) &&
+      !normalizeText(remote.avatarPresetId) &&
+      !normalizeText(remote.avatarUri)
+  );
+
+  return needsAvatarRecovery || isRemoteProfileEffectivelyEmpty(remote);
+}
+
+async function persistScopedProfile(identity: DataIdentity, profile: HealthProfile) {
+  await Promise.all([
+    saveStoredHealthProfile(profile, identity.session),
+    saveFallbackHealthProfile(identity.scopeKey, profile)
+  ]);
+
+  return profile;
+}
+
+async function loadScopedProfile(identity: DataIdentity) {
+  const storedProfile = await loadStoredHealthProfile(identity.session);
+  if (storedProfile) {
+    return storedProfile;
+  }
+
+  return getFallbackHealthProfile(identity.scopeKey);
+}
+
+async function pushProfileToServer(profile: HealthProfile) {
+  return request<ServerProfileResponse>("/api/profile", {
+    method: "PUT",
+    body: JSON.stringify(buildServerProfilePayload(profile))
+  });
+}
+
+async function recoverServerProfile(identity: DataIdentity, remote: ServerProfileResponse, stored: HealthProfile | null) {
+  const merged = mergeServerProfile(remote, stored, identity.session);
+
+  if (!shouldRecoverServerProfile(remote, stored, merged)) {
+    return remote;
+  }
+
+  try {
+    return await pushProfileToServer(merged);
+  } catch {
+    return remote;
+  }
+}
+
+async function recoverAccountGlucoseRecords(identity: DataIdentity) {
+  if (!identity.session) {
+    return;
+  }
+
+  const existingTask = glucoseRecoveryTasks.get(identity.scopeKey);
+  if (existingTask) {
+    await existingTask;
+    return;
+  }
+
+  const task = (async () => {
+    const recordedPoints = await getFallbackRecordedGlucosePoints(identity.scopeKey);
+
+    if (recordedPoints.length === 0) {
+      return;
+    }
+
+    const sortedDates = [...new Set(recordedPoints.map((point) => point.date))].sort((left, right) => left.localeCompare(right));
+    const remoteRecords = await request<ServerCareRecordResponse[]>(
+      `/api/records/care${buildQuery({
+        startDate: sortedDates[0],
+        endDate: sortedDates[sortedDates.length - 1]
+      })}`
+    );
+    const remoteKeys = new Set(
+      remoteRecords
+        .filter((record) => typeof record.glucoseMmol === "number" && Number.isFinite(record.glucoseMmol))
+        .map((record) => `${record.recordedOn}:${record.glucoseMmol!.toFixed(1)}`)
+    );
+
+    for (const point of recordedPoints) {
+      const glucoseMmol = typeof point.glucoseMmol === "number" && Number.isFinite(point.glucoseMmol) ? point.glucoseMmol : null;
+      if (glucoseMmol === null) {
+        continue;
+      }
+
+      const recordKey = `${point.date}:${glucoseMmol.toFixed(1)}`;
+      if (remoteKeys.has(recordKey)) {
+        continue;
+      }
+
+      await request("/api/records/care", {
+        method: "POST",
+        body: JSON.stringify({
+          recordedOn: point.date,
+          category: "监测",
+          itemName: "血糖记录",
+          durationMinutes: 0,
+          status: "recovered",
+          note: "从账号本地缓存恢复的血糖记录",
+          glucoseMmol
+        })
+      });
+
+      remoteKeys.add(recordKey);
+    }
+  })().finally(() => {
+    glucoseRecoveryTasks.delete(identity.scopeKey);
+  });
+
+  glucoseRecoveryTasks.set(identity.scopeKey, task);
+  await task;
 }
 
 export const api = {
@@ -148,140 +362,99 @@ export const api = {
     });
   },
 
-  async getHealthProfile() {
-    const stored = await loadStoredHealthProfile();
+  async getHealthProfile(sessionOverride?: AuthSession | null) {
+    const identity = await resolveIdentity(sessionOverride);
+
+    if (!identity.session) {
+      return loadScopedProfile(identity);
+    }
+
+    const stored = await loadScopedProfile(identity);
 
     try {
       const remote = await request<ServerProfileResponse>("/api/profile");
-      const merged: HealthProfile = {
-        ...mockHealthProfile,
-        ...stored,
-        email: remote.email ?? stored?.email ?? mockSession.email,
-        nickname: remote.nickname ?? stored?.nickname ?? mockHealthProfile.nickname,
-        avatarPresetId: stored?.avatarPresetId ?? mockHealthProfile.avatarPresetId,
-        avatarUri: stored?.avatarUri ?? mockHealthProfile.avatarUri,
-        conditionLabel: remote.conditionLabel ?? stored?.conditionLabel ?? mockHealthProfile.conditionLabel,
-        fastingGlucoseBaseline:
-          remote.fastingGlucoseBaseline ?? stored?.fastingGlucoseBaseline ?? mockHealthProfile.fastingGlucoseBaseline,
-        bloodPressureBaseline:
-          remote.bloodPressureBaseline ?? stored?.bloodPressureBaseline ?? mockHealthProfile.bloodPressureBaseline,
-        restingHeartRate: remote.restingHeartRate ?? stored?.restingHeartRate ?? mockHealthProfile.restingHeartRate,
-        medicationPlan: remote.medicationPlan ?? stored?.medicationPlan ?? mockHealthProfile.medicationPlan,
-        notes: remote.notes ?? stored?.notes ?? mockHealthProfile.notes,
-        age: remote.age ?? stored?.age ?? mockHealthProfile.age,
-        biologicalSex: remote.gender ?? stored?.biologicalSex ?? mockHealthProfile.biologicalSex,
-        heightCm: remote.heightCm ?? stored?.heightCm ?? mockHealthProfile.heightCm,
-        weightKg: remote.weightKg ?? stored?.weightKg ?? mockHealthProfile.weightKg,
-        targetWeightKg: remote.targetWeightKg ?? stored?.targetWeightKg ?? mockHealthProfile.targetWeightKg,
-        careFocus: remote.careFocus ?? stored?.careFocus ?? mockHealthProfile.careFocus,
-        primaryTarget: remote.healthGoal ?? stored?.primaryTarget ?? mockHealthProfile.primaryTarget,
-        updatedAt: remote.updatedAt ?? stored?.updatedAt ?? new Date().toISOString(),
-        completedAt: stored?.completedAt ?? new Date().toISOString()
-      };
-
-      await saveStoredHealthProfile(merged);
-      hydrateFallbackProfile(merged);
-      return merged;
+      const recovered = await recoverServerProfile(identity, remote, stored);
+      const merged = mergeServerProfile(recovered, stored, identity.session);
+      return persistScopedProfile(identity, merged);
     } catch {
-      const fallback = stored ?? getFallbackHealthProfile();
-      hydrateFallbackProfile(fallback);
-      return fallback;
+      return stored;
     }
   },
 
   async saveHealthProfile(payload: HealthProfile) {
-    const localProfile = saveFallbackHealthProfile({
+    const identity = await resolveIdentity();
+    const now = new Date().toISOString();
+    const localProfile: HealthProfile = {
       ...payload,
-      updatedAt: new Date().toISOString(),
-      completedAt: payload.completedAt || new Date().toISOString()
-    });
+      email: payload.email ?? identity.session?.email ?? null,
+      nickname: payload.nickname.trim(),
+      conditionLabel: payload.conditionLabel.trim(),
+      primaryTarget: payload.primaryTarget.trim(),
+      updatedAt: now,
+      completedAt: payload.completedAt || now
+    };
 
-    await saveStoredHealthProfile(localProfile);
-    hydrateFallbackProfile(localProfile);
-
-    try {
-      const remote = await request<ServerProfileResponse>("/api/profile", {
-        method: "PUT",
-        body: JSON.stringify({
-          nickname: payload.nickname,
-          conditionLabel: payload.conditionLabel,
-          fastingGlucoseBaseline: payload.fastingGlucoseBaseline,
-          bloodPressureBaseline: payload.bloodPressureBaseline,
-          restingHeartRate: payload.restingHeartRate,
-          medicationPlan: payload.medicationPlan,
-          notes: payload.notes,
-          age: payload.age,
-          gender: payload.biologicalSex,
-          heightCm: payload.heightCm,
-          weightKg: payload.weightKg,
-          targetWeightKg: payload.targetWeightKg,
-          careFocus: payload.careFocus,
-          healthGoal: payload.primaryTarget
-        })
-      });
-
-      const merged: HealthProfile = {
-        ...localProfile,
-        email: remote.email ?? localProfile.email,
-        nickname: remote.nickname ?? localProfile.nickname,
-        avatarPresetId: localProfile.avatarPresetId,
-        avatarUri: localProfile.avatarUri,
-        conditionLabel: remote.conditionLabel ?? localProfile.conditionLabel,
-        fastingGlucoseBaseline: remote.fastingGlucoseBaseline ?? localProfile.fastingGlucoseBaseline,
-        bloodPressureBaseline: remote.bloodPressureBaseline ?? localProfile.bloodPressureBaseline,
-        restingHeartRate: remote.restingHeartRate ?? localProfile.restingHeartRate,
-        medicationPlan: remote.medicationPlan ?? localProfile.medicationPlan,
-        notes: remote.notes ?? localProfile.notes,
-        age: remote.age ?? localProfile.age,
-        biologicalSex: remote.gender ?? localProfile.biologicalSex,
-        heightCm: remote.heightCm ?? localProfile.heightCm,
-        weightKg: remote.weightKg ?? localProfile.weightKg,
-        targetWeightKg: remote.targetWeightKg ?? localProfile.targetWeightKg,
-        careFocus: remote.careFocus ?? localProfile.careFocus,
-        primaryTarget: remote.healthGoal ?? localProfile.primaryTarget,
-        updatedAt: remote.updatedAt ?? localProfile.updatedAt
-      };
-
-      await saveStoredHealthProfile(merged);
-      hydrateFallbackProfile(merged);
-      return merged;
-    } catch {
+    if (!identity.session) {
+      await persistScopedProfile(identity, localProfile);
       return localProfile;
     }
+
+    const remote = await pushProfileToServer(localProfile);
+    const merged = mergeServerProfile(remote, localProfile, identity.session);
+    return persistScopedProfile(identity, merged);
   },
 
   async getDashboardSnapshot(date?: string) {
-    const profile = await this.getHealthProfile();
-    hydrateFallbackProfile(profile);
+    const identity = await resolveIdentity();
 
-    return request<DashboardSnapshot>(`/api/dashboard/snapshot${buildQuery({ date })}`, {}, () => getFallbackDashboardSnapshot(date));
+    if (!identity.session) {
+      return getFallbackDashboardSnapshot(identity.scopeKey, date);
+    }
+
+    try {
+      await recoverAccountGlucoseRecords(identity);
+    } catch {
+      // Recovery is best-effort; failed recovery should not block current reads.
+    }
+
+    return request<DashboardSnapshot>(`/api/dashboard/snapshot${buildQuery({ date })}`, {}, () =>
+      getFallbackDashboardSnapshot(identity.scopeKey, date)
+    );
   },
 
   async getChatThread(date?: string) {
-    const profile = await this.getHealthProfile();
-    hydrateFallbackProfile(profile);
-    return request<ChatThread>(`/api/interaction/thread${buildQuery({ date })}`, {}, () => getFallbackChatThread(date));
+    const identity = await resolveIdentity();
+
+    if (!identity.session) {
+      return getFallbackChatThread(identity.scopeKey, date);
+    }
+
+    return request<ChatThread>(`/api/interaction/thread${buildQuery({ date })}`, {}, () => getFallbackChatThread(identity.scopeKey, date));
   },
 
-  sendChatMessage(payload: ChatSendPayload) {
-    return request<ChatSendResult>(
-      "/api/interaction/messages",
-      {
-        method: "POST",
-        body: JSON.stringify(payload)
-      },
-      () => sendFallbackChatMessage(payload)
-    );
+  async sendChatMessage(payload: ChatSendPayload) {
+    const identity = await resolveIdentity();
+
+    if (!identity.session) {
+      return sendFallbackChatMessage(identity.scopeKey, payload);
+    }
+
+    return request<ChatSendResult>("/api/interaction/messages", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
   },
 
-  submitAdjustmentFeedback(payload: DashboardFeedbackPayload) {
-    return request<DashboardSnapshot>(
-      "/api/dashboard/adjustment-feedback",
-      {
-        method: "POST",
-        body: JSON.stringify(payload)
-      },
-      () => submitFallbackDashboardFeedback(payload)
-    );
+  async submitAdjustmentFeedback(payload: DashboardFeedbackPayload) {
+    const identity = await resolveIdentity();
+
+    if (!identity.session) {
+      return submitFallbackDashboardFeedback(identity.scopeKey, payload);
+    }
+
+    return request<DashboardSnapshot>("/api/dashboard/adjustment-feedback", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
   }
 };

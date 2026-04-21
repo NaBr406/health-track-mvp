@@ -1,14 +1,14 @@
-﻿import { Ionicons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
-import Svg, { Circle, Defs, Line, LinearGradient, Path, Stop } from "react-native-svg";
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import Svg, { Circle, Line, Path } from "react-native-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { OutlineButton, Panel } from "../../components/clinical";
 import { api } from "../../lib/api";
 import { formatDateTime, getTodayString, parseLeadingNumber } from "../../lib/utils";
 import { useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
 import { borders, colors, layout, radii, shadows, spacing, typography } from "../../theme/tokens";
-import type { AuthSession, DashboardMetric, DashboardSnapshot, GlucoseForecastPoint, HealthProfile } from "../../types";
+import type { AuthSession, DashboardMetric, DashboardSnapshot, GlucoseForecastPoint, HealthProfile, MonitoringHistoryPoint } from "../../types";
 
 type DashboardScreenProps = {
   session: AuthSession | null;
@@ -38,28 +38,41 @@ type GlucoseChartPoint = {
   xValue: number;
 };
 
-type GlucoseChartMeta = {
+type GlucoseAxisItem = {
+  value: number;
+  label: string;
+};
+
+type GlucoseChartSeriesMeta = {
+  kind: "series";
   points: GlucoseChartPoint[];
   currentValue: number;
   xMin: number;
   xMax: number;
   minValue: number;
   maxValue: number;
-  splitIndex: number;
-  xLabels: string[];
+  xAxisItems: GlucoseAxisItem[];
   yTicks: number[];
-  markerValues: number[];
   footerText: string;
 };
 
+type GlucoseChartEmptyMeta = {
+  kind: "empty";
+  emptyLabel: string;
+  footerText: string;
+};
+
+type GlucoseChartMeta = GlucoseChartSeriesMeta | GlucoseChartEmptyMeta;
+type GlucoseRiskTone = "safe" | "warning" | "danger";
+
 const DEFAULT_CALORIE_TARGET = 1700;
 const DEFAULT_EXERCISE_TARGET = 40;
-const DEFAULT_GLUCOSE_TARGET = 7.2;
-const GLUCOSE_LEFT_LINE = "#8FD7CA";
-const GLUCOSE_LEFT_FILL = "rgba(143, 215, 202, 0.18)";
-const GLUCOSE_RIGHT_LINE = "#F3B9A7";
-const GLUCOSE_RIGHT_FILL = "rgba(244, 212, 136, 0.20)";
-const GLUCOSE_ANCHOR_TEMPLATE = [6.7, 5.3, 4.5, 5.4, 6.4, 7.2, 7.9, 6.6, 6.3, 5.2, 6.1, 7.1, 7.6] as const;
+const GLUCOSE_SAFE_LINE = "#42A08A";
+const GLUCOSE_SAFE_FILL = "rgba(66, 160, 138, 0.18)";
+const GLUCOSE_WARNING_LINE = "#D4A227";
+const GLUCOSE_WARNING_FILL = "rgba(212, 162, 39, 0.22)";
+const GLUCOSE_DANGER_LINE = "#D96060";
+const GLUCOSE_DANGER_FILL = "rgba(217, 96, 96, 0.24)";
 
 export function DashboardScreen({
   session,
@@ -75,7 +88,7 @@ export function DashboardScreen({
 
   useEffect(() => {
     void loadSnapshot(true);
-  }, [refreshToken]);
+  }, [refreshToken, session?.userId]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 30000);
@@ -154,13 +167,13 @@ export function DashboardScreen({
           <Panel>
             <View style={styles.syncHeader}>
               <View style={styles.syncBadge}>
-                <Ionicons color={colors.primary} name="cloud-offline-outline" size={16} />
-                <Text style={styles.syncBadgeText}>本地离线模式</Text>
+                <Ionicons color={colors.primary} name="person-outline" size={16} />
+                <Text style={styles.syncBadgeText}>游客模式</Text>
               </View>
-              <Text style={styles.syncTitle}>当前可以继续浏览和记录</Text>
-              <Text style={styles.syncDescription}>登录后可将资料、建议与对话同步到云端。</Text>
+              <Text style={styles.syncTitle}>当前正在使用游客数据空间</Text>
+              <Text style={styles.syncDescription}>登录后会直接切换到该账号的专属数据，游客数据会继续独立保留，不会混入账号记录。</Text>
             </View>
-            <OutlineButton label="登录同步" onPress={onRequestSignIn} variant="ghost" />
+            <OutlineButton label="登录账号" onPress={onRequestSignIn} variant="ghost" />
           </Panel>
         ) : null}
       </ScrollView>
@@ -194,7 +207,18 @@ function GlucoseMetricCard({ metric }: { metric: MetricCardMeta }) {
           <Text style={styles.glucoseTrendTitle}>{metric.label}</Text>
           <Text style={styles.glucoseTrendSubtitle}>{metric.descriptor}</Text>
         </View>
-        <Text style={styles.glucoseTrendUnit}>{metric.unitText}</Text>
+        <View style={styles.glucoseTrendValueBlock}>
+          <View style={styles.glucoseTrendValueLine}>
+            <Text style={styles.glucoseTrendValueText}>{metric.valueText}</Text>
+            {metric.unitText ? <Text style={styles.glucoseTrendValueUnit}>{metric.unitText}</Text> : null}
+          </View>
+          {(metric.statusText || metric.helperText) ? (
+            <View style={styles.glucoseTrendMetaBlock}>
+              {metric.statusText ? <Text style={styles.glucoseTrendStatusText}>{metric.statusText}</Text> : null}
+              {metric.helperText ? <Text style={styles.glucoseTrendHelperText}>{metric.helperText}</Text> : null}
+            </View>
+          ) : null}
+        </View>
       </View>
       <GlucoseLineChart chart={metric.chart} />
       <Text style={styles.glucoseTrendFooter}>{metric.chart.footerText}</Text>
@@ -220,9 +244,7 @@ function MetricValueBlock({ metric }: { metric: MetricCardMeta }) {
   return (
     <View style={styles.metricValueBlock}>
       <View style={styles.metricValueLine}>
-        <Text style={styles.metricValueText}>
-          {metric.valueText}
-        </Text>
+        <Text style={styles.metricValueText}>{metric.valueText}</Text>
         {metric.unitText ? <Text style={styles.metricUnitText}>{metric.unitText}</Text> : null}
       </View>
       <View style={styles.metricMetaBlock}>
@@ -267,105 +289,141 @@ function CircularProgressRing({ progress }: { progress: number }) {
 }
 
 function GlucoseLineChart({ chart }: { chart: GlucoseChartMeta }) {
-  const width = 340;
-  const height = 178;
+  const { width: windowWidth } = useWindowDimensions();
+
+  if (chart.kind === "empty") {
+    return (
+      <View style={styles.glucoseEmptyState}>
+        <Ionicons color={colors.textSoft} name="pulse-outline" size={24} />
+        <Text style={styles.glucoseEmptyTitle}>{chart.emptyLabel}</Text>
+      </View>
+    );
+  }
+
+  const width = Math.max(280, Math.min(windowWidth - layout.pageHorizontal * 2 - spacing.lg * 2, 420));
+  const height = 194;
   const chartPaddingLeft = 10;
   const chartPaddingRight = 36;
   const chartPaddingTop = 12;
-  const chartPaddingBottom = 22;
-  const availableHeight = height - chartPaddingTop - chartPaddingBottom;
+  const chartPaddingBottom = 34;
+  const maxPointRadius = 5.6;
+  const plotInsetX = maxPointRadius + 4;
+  const plotInsetY = maxPointRadius + 4;
+  const plotLeft = chartPaddingLeft + plotInsetX;
+  const plotRight = width - chartPaddingRight - plotInsetX;
+  const plotTop = chartPaddingTop + plotInsetY;
+  const plotBottom = height - chartPaddingBottom - plotInsetY;
+  const availableHeight = Math.max(plotBottom - plotTop, 1);
   const chartRange = Math.max(chart.maxValue - chart.minValue, 0.1);
-  const availableWidth = width - chartPaddingLeft - chartPaddingRight;
+  const availableWidth = Math.max(plotRight - plotLeft, 1);
   const xRange = Math.max(chart.xMax - chart.xMin, 1);
-  const resolveY = (value: number) => chartPaddingTop + ((chart.maxValue - value) / chartRange) * availableHeight;
-  const resolveX = (xValue: number) => chartPaddingLeft + ((xValue - chart.xMin) / xRange) * availableWidth;
-  const baselineY = resolveY(chart.minValue);
-  const lastIndex = chart.points.length - 1;
-  const splitIndex = Math.max(0, Math.min(chart.splitIndex, lastIndex));
-  const hasRightSegment = splitIndex < lastIndex;
-
-  const buildSegmentPath = (startIndex: number, endIndex: number) =>
-    chart.points
-      .slice(startIndex, endIndex + 1)
-      .map((point, offset) => `${offset === 0 ? "M" : "L"} ${resolveX(point.xValue)} ${resolveY(point.value)}`)
-      .join(" ");
-
-  const buildSegmentAreaPath = (startIndex: number, endIndex: number) => {
-    const linePath = buildSegmentPath(startIndex, endIndex);
-    return `${linePath} L ${resolveX(chart.points[endIndex].xValue)} ${baselineY} L ${resolveX(chart.points[startIndex].xValue)} ${baselineY} Z`;
-  };
+  const resolveY = (value: number) => plotTop + ((chart.maxValue - value) / chartRange) * availableHeight;
+  const resolveX = (xValue: number) => plotLeft + ((xValue - chart.xMin) / xRange) * availableWidth;
+  const baselineY = plotBottom;
+  const axisItems = sampleXAxisItems(chart.xAxisItems, availableWidth);
+  const segments = chart.points.slice(0, -1).map((point, index) => {
+    const nextPoint = chart.points[index + 1];
+    return {
+      id: `${point.xValue}-${nextPoint.xValue}`,
+      startPoint: point,
+      endPoint: nextPoint,
+      tone: resolveGlucoseTone(Math.max(point.value, nextPoint.value))
+    };
+  });
 
   return (
     <View style={styles.glucoseChartBlock}>
       <View style={styles.glucoseChartFrame}>
         <Svg height={height} style={styles.glucoseSvg} viewBox={`0 0 ${width} ${height}`} width="100%">
-          <Defs>
-            <LinearGradient id="glucoseLeftFill" x1="0" x2="0" y1="0" y2="1">
-              <Stop offset="0%" stopColor={GLUCOSE_LEFT_FILL} />
-              <Stop offset="100%" stopColor="rgba(143, 215, 202, 0.06)" />
-            </LinearGradient>
-            <LinearGradient id="glucoseRightFill" x1="0" x2="0" y1="0" y2="1">
-              <Stop offset="0%" stopColor={GLUCOSE_RIGHT_FILL} />
-              <Stop offset="100%" stopColor="rgba(244, 212, 136, 0.06)" />
-            </LinearGradient>
-          </Defs>
-
           {chart.yTicks.map((tick) => {
             const y = resolveY(tick);
-            return <Line key={`y-grid-${tick}`} stroke="rgba(16, 35, 59, 0.08)" strokeWidth={1} x1={chartPaddingLeft} x2={resolveX(chart.xMax)} y1={y} y2={y} />;
+            return <Line key={`y-grid-${tick}`} stroke="rgba(16, 35, 59, 0.08)" strokeWidth={1} x1={plotLeft} x2={plotRight} y1={y} y2={y} />;
           })}
 
-          {chart.markerValues.map((value) => {
-            const x = resolveX(value);
-            return <Line key={`x-grid-${value}`} stroke="rgba(16, 35, 59, 0.03)" strokeWidth={1} x1={x} x2={x} y1={chartPaddingTop} y2={chartPaddingTop + availableHeight} />;
+          {axisItems.map((item) => {
+            const x = resolveX(item.value);
+            return <Line key={`x-grid-${item.value}`} stroke="rgba(16, 35, 59, 0.03)" strokeWidth={1} x1={x} x2={x} y1={plotTop} y2={plotBottom} />;
           })}
 
-          <Path d={buildSegmentAreaPath(0, splitIndex)} fill="url(#glucoseLeftFill)" />
-          {hasRightSegment ? <Path d={buildSegmentAreaPath(splitIndex, lastIndex)} fill="url(#glucoseRightFill)" /> : null}
-          <Path d={buildSegmentPath(0, splitIndex)} fill="none" stroke={GLUCOSE_LEFT_LINE} strokeLinecap="round" strokeLinejoin="round" strokeWidth={3.5} />
-          {hasRightSegment ? (
-            <Path d={buildSegmentPath(splitIndex, lastIndex)} fill="none" stroke={GLUCOSE_RIGHT_LINE} strokeLinecap="round" strokeLinejoin="round" strokeWidth={3.5} />
-          ) : null}
+          {segments.map((segment) => {
+            const colorsByTone = getGlucoseToneColors(segment.tone);
+            return (
+              <Path
+                key={`area-${segment.id}`}
+                d={`M ${resolveX(segment.startPoint.xValue)} ${resolveY(segment.startPoint.value)} L ${resolveX(segment.endPoint.xValue)} ${resolveY(segment.endPoint.value)} L ${resolveX(segment.endPoint.xValue)} ${baselineY} L ${resolveX(segment.startPoint.xValue)} ${baselineY} Z`}
+                fill={colorsByTone.fill}
+              />
+            );
+          })}
 
-          {chart.points.map((point, index) => (
-            <Circle
-              key={`point-${index}`}
-              cx={resolveX(point.xValue)}
-              cy={resolveY(point.value)}
-              fill={point.pointType === "current_marker" ? colors.primary : index <= splitIndex ? GLUCOSE_LEFT_LINE : GLUCOSE_RIGHT_LINE}
-              opacity={point.pointType === "current_marker" ? 1 : 0.9}
-              r={point.pointType === "current_marker" ? 5.4 : point.pointType === "measured_anchor" ? 4.8 : 4.2}
-              stroke={point.pointType === "current_marker" ? colors.surface : "none"}
-              strokeWidth={point.pointType === "current_marker" ? 2.2 : 0}
-            />
-          ))}
+          {segments.map((segment) => {
+            const colorsByTone = getGlucoseToneColors(segment.tone);
+            return (
+              <Path
+                key={`line-${segment.id}`}
+                d={`M ${resolveX(segment.startPoint.xValue)} ${resolveY(segment.startPoint.value)} L ${resolveX(segment.endPoint.xValue)} ${resolveY(segment.endPoint.value)}`}
+                fill="none"
+                stroke={colorsByTone.line}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={3.5}
+              />
+            );
+          })}
+
+          {chart.points.map((point, index) => {
+            const toneColors = getGlucoseToneColors(resolveGlucoseTone(point.value));
+            const isCurrentMarker = point.pointType === "current_marker";
+
+            return (
+              <Circle
+                key={`point-${index}`}
+                cx={resolveX(point.xValue)}
+                cy={resolveY(point.value)}
+                fill={toneColors.line}
+                opacity={isCurrentMarker ? 1 : 0.95}
+                r={isCurrentMarker ? 5.6 : point.pointType === "measured_anchor" ? 4.8 : 4.2}
+                stroke={isCurrentMarker ? colors.surface : "none"}
+                strokeWidth={isCurrentMarker ? 2.2 : 0}
+              />
+            );
+          })}
         </Svg>
 
-        <View pointerEvents="none" style={styles.glucoseYAxis}>
+        <View
+          pointerEvents="none"
+          style={[
+            styles.glucoseYAxis,
+            {
+              top: Math.max(plotTop - 8, 0),
+              bottom: Math.max(height - plotBottom - 8, 0)
+            }
+          ]}
+        >
           {chart.yTicks.map((tick) => (
             <Text key={`tick-${tick}`} style={styles.glucoseYAxisLabel}>
-              {tick}
+              {formatGlucoseAxisLabel(tick)}
             </Text>
           ))}
         </View>
       </View>
 
       <View style={styles.glucoseAxisLabels}>
-        {chart.xLabels.map((label, index) => (
-          <Text
-            key={`${label}-${chart.markerValues[index] ?? index}`}
+        {axisItems.map((item, index) => (
+          <View
+            key={`${item.label}-${item.value}`}
             style={[
-              styles.glucoseAxisLabel,
-              { left: `${(resolveX(chart.markerValues[index] ?? chart.xMin) / width) * 100}%` },
+              styles.glucoseAxisItem,
+              { left: `${(resolveX(item.value) / width) * 100}%` },
               index === 0
-                ? styles.glucoseAxisLabelStart
-                : index === chart.xLabels.length - 1
-                  ? styles.glucoseAxisLabelEnd
-                  : styles.glucoseAxisLabelCenter
+                ? styles.glucoseAxisItemStart
+                : index === axisItems.length - 1
+                  ? styles.glucoseAxisItemEnd
+                  : styles.glucoseAxisItemCenter
             ]}
           >
-            {label}
-          </Text>
+            <Text style={styles.glucoseAxisLabel}>{item.label}</Text>
+          </View>
         ))}
       </View>
     </View>
@@ -376,9 +434,9 @@ function buildAdviceCard(snapshot: DashboardSnapshot | null) {
   if (!snapshot) {
     return {
       title: "系统正在生成今日方案",
-      summary: "同步最近的对话和监测摘要后，这里会展示压缩后的今日建议。",
-      parameter: "等待同步",
-      timestamp: "同步中"
+      summary: "整理最近的对话和监测摘要后，这里会展示压缩后的今日建议。",
+      parameter: "处理中",
+      timestamp: "更新中"
     };
   }
 
@@ -404,10 +462,10 @@ function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: Hea
   const calorieTarget = resolveCalorieTarget(healthProfile);
   const calorieValue = getMetricNumber(snapshot, "calories");
   const exerciseValue = getMetricNumber(snapshot, "exercise");
-  const glucoseChart = buildGlucoseChart(snapshot, healthProfile, now);
-  const glucoseValue = glucoseChart.currentValue || getMetricNumber(snapshot, "glucose");
-  const hasForecast = Boolean(snapshot?.glucoseForecast8h?.length);
-  const glucoseSource = resolveForecastSourceLabel(snapshot);
+  const glucoseChart = buildGlucoseChart(snapshot, now);
+  const hasGlucoseData = glucoseChart.kind === "series";
+  const hasForecast = hasGlucoseForecast(snapshot);
+  const hasRecordedHistory = getRecordedGlucoseHistory(snapshot).length > 0;
 
   return [
     {
@@ -434,41 +492,55 @@ function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: Hea
     },
     {
       id: "glucose",
-      label: hasForecast ? "血糖 8h 预测" : "血糖趋势",
-      descriptor: hasForecast ? glucoseSource : "基于最近记录生成",
+      label: hasForecast ? "血糖 8h 趋势" : "血糖趋势",
+      descriptor: hasGlucoseData ? (hasForecast ? resolveForecastSourceLabel(snapshot) : hasRecordedHistory ? "近 7 天实测记录" : "最新血糖记录") : "暂无血糖数据",
       iconName: "pulse-outline",
-      valueText: glucoseValue > 0 ? glucoseValue.toFixed(1) : "--",
+      valueText: hasGlucoseData ? glucoseChart.currentValue.toFixed(1) : "--",
       unitText: "mmol/L",
-      statusText: snapshot?.glucoseRiskLevel ? `风险 ${snapshot.glucoseRiskLevel}` : "",
-      helperText: snapshot?.calibrationApplied ? "已按最新实测值校准" : "",
+      statusText: hasGlucoseData && snapshot?.glucoseRiskLevel ? `风险 ${snapshot.glucoseRiskLevel}` : hasGlucoseData ? "已展示实测相关曲线" : "暂无数据",
+      helperText: hasGlucoseData ? (snapshot?.calibrationApplied ? "已按最新实测值更新" : "") : "记录血糖后自动展示曲线",
       chart: glucoseChart
     }
   ];
 }
 
-function buildGlucoseChart(snapshot: DashboardSnapshot | null, healthProfile: HealthProfile | null, now: Date): GlucoseChartMeta {
-  const forecast = snapshot?.glucoseForecast8h?.filter((point) => Number.isFinite(point.predictedGlucoseMmol)) ?? [];
+function buildGlucoseChart(snapshot: DashboardSnapshot | null, now: Date): GlucoseChartMeta {
+  const forecast = getGlucoseForecast(snapshot);
   if (forecast.length > 0) {
     return buildForecastChart(snapshot, forecast, now);
   }
+
   const recordedHistory = getRecordedGlucoseHistory(snapshot);
   if (recordedHistory.length > 0) {
     return buildHistoryChart(recordedHistory);
   }
-  return buildSyntheticChart(snapshot, healthProfile, now);
+
+  return {
+    kind: "empty",
+    emptyLabel: "暂无数据",
+    footerText: "记录血糖后，这里会展示实际趋势和风险区间。"
+  };
 }
 
 function resolveForecastSourceLabel(snapshot: DashboardSnapshot | null) {
   if (snapshot?.forecastSource === "dify") {
-    return "Dify 工作流";
+    return "按实测值生成的 8 小时预测";
   }
   if (snapshot?.forecastSource === "local") {
-    return snapshot.calibrationApplied ? "规则模拟（已校准）" : "规则模拟";
+    return "按实测值延展的本地趋势";
   }
-  return findMetric(snapshot, "glucose")?.source || "基于最近记录生成";
+  return findMetric(snapshot, "glucose")?.source || "实测记录";
 }
 
-function buildForecastChart(snapshot: DashboardSnapshot | null, forecast: GlucoseForecastPoint[], now: Date): GlucoseChartMeta {
+function hasGlucoseForecast(snapshot: DashboardSnapshot | null) {
+  return getGlucoseForecast(snapshot).length > 0;
+}
+
+function getGlucoseForecast(snapshot: DashboardSnapshot | null) {
+  return snapshot?.glucoseForecast8h?.filter((point) => Number.isFinite(point.predictedGlucoseMmol)) ?? [];
+}
+
+function buildForecastChart(snapshot: DashboardSnapshot | null, forecast: GlucoseForecastPoint[], now: Date): GlucoseChartSeriesMeta {
   const sorted = [...forecast].sort((left, right) => left.hourOffset - right.hourOffset);
   const forecastStart = resolveForecastStartTime(snapshot, now);
   const lastHour = Math.max(...sorted.map((point) => point.hourOffset), 0);
@@ -479,90 +551,51 @@ function buildForecastChart(snapshot: DashboardSnapshot | null, forecast: Glucos
     xValue: point.hourOffset
   }));
   const liveSeries = insertCurrentGlucosePoint(basePoints, resolveElapsedHours(forecastStart, now), formatClockLabel(now));
-  const values = basePoints.map((point) => point.value);
-  const ticks = buildYAxisTicks(liveSeries.points.map((point) => point.value));
-  const markerValues = buildForecastMarkerValues(sorted);
+  const values = liveSeries.points.map((point) => point.value);
+  const ticks = buildYAxisTicks(values);
 
   return {
+    kind: "series",
     points: liveSeries.points,
     currentValue: liveSeries.currentValue,
     xMin: 0,
     xMax: lastHour,
     minValue: ticks[ticks.length - 1],
     maxValue: ticks[0],
-    splitIndex: liveSeries.splitIndex,
-    xLabels: buildForecastXAxisLabels(markerValues, forecastStart),
+    xAxisItems: basePoints.map((point) => ({ value: point.xValue, label: point.label })),
     yTicks: ticks,
-    markerValues,
     footerText: buildForecastFooter(snapshot, values, forecastStart)
   };
 }
 
 function getRecordedGlucoseHistory(snapshot: DashboardSnapshot | null) {
   return (snapshot?.history ?? []).filter(
-    (item) => item.glucoseSource === "recorded" && Number.isFinite(item.glucoseMmol)
+    (item): item is MonitoringHistoryPoint & { glucoseMmol: number } =>
+      item.glucoseSource === "recorded" && typeof item.glucoseMmol === "number" && Number.isFinite(item.glucoseMmol)
   );
 }
 
-function buildHistoryChart(history: DashboardSnapshot["history"]): GlucoseChartMeta {
+function buildHistoryChart(history: Array<MonitoringHistoryPoint & { glucoseMmol: number }>): GlucoseChartSeriesMeta {
   const points = history.map((item, index) => ({
     label: formatHistoryAxisLabel(item.date),
     value: Number(item.glucoseMmol.toFixed(1)),
-    pointType: "measured_anchor",
+    pointType: index === history.length - 1 ? "measured_anchor" : "forecast",
     xValue: index
   }));
   const values = points.map((item) => item.value);
   const ticks = buildYAxisTicks(values);
-  const markerValues = buildHistoryMarkerValues(history);
 
   return {
+    kind: "series",
     points,
-    currentValue: points[points.length - 1]?.value ?? DEFAULT_GLUCOSE_TARGET,
+    currentValue: points[points.length - 1]?.value ?? 0,
     xMin: 0,
     xMax: Math.max(points.length - 1, 0),
     minValue: ticks[ticks.length - 1],
     maxValue: ticks[0],
-    splitIndex: points.length - 1,
-    xLabels: buildHistoryXAxisLabels(history, markerValues),
+    xAxisItems: points.map((point) => ({ value: point.xValue, label: point.label })),
     yTicks: ticks,
-    markerValues,
     footerText: buildHistoryFooter(values, history.length)
-  };
-}
-
-function buildSyntheticChart(snapshot: DashboardSnapshot | null, healthProfile: HealthProfile | null, now: Date): GlucoseChartMeta {
-  const historyValues = getRecordedGlucoseHistory(snapshot).map((item) => item.glucoseMmol);
-  const currentValue = getMetricNumber(snapshot, "glucose") || parseLeadingNumber(healthProfile?.fastingGlucoseBaseline) || DEFAULT_GLUCOSE_TARGET;
-  const recentAverage = historyValues.length > 0 ? average(historyValues) : average(Array.from(GLUCOSE_ANCHOR_TEMPLATE));
-  const averageOffset = clamp(recentAverage - average(Array.from(GLUCOSE_ANCHOR_TEMPLATE)), -0.45, 0.45);
-  const currentOffset = clamp(currentValue - DEFAULT_GLUCOSE_TARGET, -0.55, 0.75);
-  const anchorValues = GLUCOSE_ANCHOR_TEMPLATE.map((value, index) => {
-    const influence = index >= 5 && index <= 8 ? 0.8 : 0.55;
-    return clamp(value + averageOffset + currentOffset * influence, 3.8, 8.6);
-  });
-  const basePoints = anchorValues.map((value, index) => ({
-    label: formatDayHourLabel(index * 2),
-    value: roundChartValue(value),
-    pointType: index === 0 ? "measured_anchor" : "forecast",
-    xValue: index * 2
-  }));
-  const liveSeries = insertCurrentGlucosePoint(basePoints, resolveCurrentHourOfDay(now), formatClockLabel(now));
-  const ticks = buildYAxisTicks(liveSeries.points.map((point) => point.value));
-  const range = Math.max(...anchorValues) - Math.min(...anchorValues);
-  const markerValues = [0, 4, 8, 12, 16, 24];
-
-  return {
-    points: liveSeries.points,
-    currentValue: liveSeries.currentValue,
-    xMin: 0,
-    xMax: 24,
-    minValue: ticks[ticks.length - 1],
-    maxValue: ticks[0],
-    splitIndex: liveSeries.splitIndex,
-    xLabels: markerValues.map((value) => formatDayHourLabel(value)),
-    yTicks: ticks,
-    markerValues,
-    footerText: `均值 ${average(anchorValues).toFixed(1)} mmol/L，${range <= 1.8 ? "趋势稳定" : range <= 2.6 ? "轻微波动" : "波动偏大"}。`
   };
 }
 
@@ -571,26 +604,10 @@ function formatHistoryAxisLabel(date: string) {
   return `${Number(month)}/${Number(day)}`;
 }
 
-function buildHistoryMarkerValues(history: DashboardSnapshot["history"]) {
-  if (history.length <= 4) {
-    return history.map((_, index) => index);
-  }
-
-  return Array.from(new Set([0, Math.round((history.length - 1) / 3), Math.round(((history.length - 1) * 2) / 3), history.length - 1])).sort(
-    (left, right) => left - right
-  );
-}
-
-function buildHistoryXAxisLabels(history: DashboardSnapshot["history"], markerValues: number[]) {
-  return markerValues.map((index) => formatHistoryAxisLabel(history[index].date));
-}
-
 function buildHistoryFooter(values: number[], sampleCount: number) {
   const minValue = Math.min(...values);
   const maxValue = Math.max(...values);
-  return `近 ${sampleCount} 次实测，均值 ${average(values).toFixed(1)} mmol/L，波动 ${(
-    maxValue - minValue
-  ).toFixed(1)}。`;
+  return `近 ${sampleCount} 次实测，均值 ${average(values).toFixed(1)} mmol/L，波动 ${(maxValue - minValue).toFixed(1)}。`;
 }
 
 function buildForecastFooter(snapshot: DashboardSnapshot | null, values: number[], forecastStart: Date) {
@@ -605,30 +622,91 @@ function buildForecastFooter(snapshot: DashboardSnapshot | null, values: number[
   if (typeof snapshot?.returnToBaselineHourOffset === "number") {
     parts.push(`约 ${formatClockLabel(addHours(forecastStart, snapshot.returnToBaselineHourOffset))} 回到基线`);
   }
-  if (snapshot?.calibrationApplied) {
-    parts.push("已校准");
-  }
   return parts.join("，") + "。";
-}
-
-function buildForecastMarkerValues(forecast: GlucoseForecastPoint[]) {
-  const lastHour = Math.max(...forecast.map((point) => point.hourOffset), 0);
-  return Array.from(new Set([0, Math.round(lastHour / 4), Math.round(lastHour / 2), Math.round((lastHour * 3) / 4), lastHour])).sort(
-    (left, right) => left - right
-  );
-}
-
-function buildForecastXAxisLabels(markerValues: number[], forecastStart: Date) {
-  return markerValues.map((hour) => formatClockLabel(addHours(forecastStart, hour)));
 }
 
 function buildYAxisTicks(values: number[]) {
   const minValue = Math.min(...values);
   const maxValue = Math.max(...values);
-  const step = Math.max(1, Math.ceil((maxValue - minValue + 1.2) / 3));
-  const bottom = Math.max(3, Math.floor(minValue) - 1);
-  const top = Math.max(bottom + step * 3, Math.ceil(maxValue) + 1);
-  return [top, top - step, top - step * 2, top - step * 3];
+  const range = Math.max(maxValue - minValue, 0.3);
+  const padding = Math.max(range * 0.18, 0.2);
+  const rawMin = Math.max(0, minValue - padding);
+  const rawMax = maxValue + padding;
+  const targetTickCount = range < 1.2 ? 5 : 4;
+  const step = resolveGlucoseAxisStep(rawMax - rawMin, targetTickCount);
+  const bottom = Math.floor(rawMin / step) * step;
+  const top = Math.ceil(rawMax / step) * step;
+  const tickCount = Math.max(2, Math.round((top - bottom) / step) + 1);
+
+  return Array.from({ length: tickCount }, (_, index) => roundAxisNumber(top - index * step));
+}
+
+function resolveGlucoseAxisStep(range: number, targetTickCount: number) {
+  const rawStep = range / Math.max(targetTickCount - 1, 1);
+  const normalizedCandidates = [0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5];
+  const magnitude = 10 ** Math.floor(Math.log10(Math.max(rawStep, 0.01)));
+  const candidateSteps = Array.from(
+    new Set(
+      [-1, 0, 1].flatMap((offset) => {
+        const scaledMagnitude = magnitude * 10 ** offset;
+        return normalizedCandidates.map((candidate) => candidate * scaledMagnitude);
+      })
+    )
+  )
+    .filter((candidate) => candidate > 0)
+    .sort((left, right) => left - right);
+
+  const bestStep =
+    candidateSteps.reduce<{ step: number; score: number } | null>((best, candidate) => {
+      const tickCount = range / candidate + 1;
+      if (tickCount < 3 || tickCount > 6) {
+        return best;
+      }
+
+      const tickCountScore = Math.abs(tickCount - targetTickCount);
+      const stepScore = Math.abs(candidate - rawStep) / rawStep;
+      const score = tickCountScore * 3 + stepScore;
+
+      if (!best || score < best.score) {
+        return { step: candidate, score };
+      }
+
+      return best;
+    }, null)?.step ?? rawStep;
+
+  return bestStep;
+}
+
+function roundAxisNumber(value: number) {
+  return Number(value.toFixed(2));
+}
+
+function formatGlucoseAxisLabel(value: number) {
+  if (Math.abs(value - Math.round(value)) < 0.001) {
+    return `${Math.round(value)}`;
+  }
+
+  return value.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function sampleXAxisItems(items: GlucoseAxisItem[], availableWidth: number) {
+  if (items.length <= 2) {
+    return items;
+  }
+
+  const maxLabels = Math.max(2, Math.floor(availableWidth / 74));
+  if (items.length <= maxLabels) {
+    return items;
+  }
+
+  const step = Math.ceil((items.length - 1) / (maxLabels - 1));
+  const selected = items.filter((_, index) => index === 0 || index === items.length - 1 || index % step === 0);
+
+  if (selected[selected.length - 1]?.value !== items[items.length - 1]?.value) {
+    selected.push(items[items.length - 1]);
+  }
+
+  return selected;
 }
 
 function resolveCalorieTarget(healthProfile: HealthProfile | null) {
@@ -680,24 +758,15 @@ function resolveElapsedHours(start: Date, now: Date) {
   return (now.getTime() - start.getTime()) / (60 * 60 * 1000);
 }
 
-function resolveCurrentHourOfDay(now: Date) {
-  return now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
-}
-
 function formatClockLabel(value: Date) {
   return `${`${value.getHours()}`.padStart(2, "0")}:${`${value.getMinutes()}`.padStart(2, "0")}`;
-}
-
-function formatDayHourLabel(hourValue: number) {
-  return `${`${Math.round(hourValue)}`.padStart(2, "0")}:00`;
 }
 
 function insertCurrentGlucosePoint(points: GlucoseChartPoint[], currentX: number, currentLabel: string) {
   if (points.length === 0) {
     return {
       points,
-      splitIndex: 0,
-      currentValue: DEFAULT_GLUCOSE_TARGET
+      currentValue: 0
     };
   }
 
@@ -717,7 +786,6 @@ function insertCurrentGlucosePoint(points: GlucoseChartPoint[], currentX: number
             }
           : point
       ),
-      splitIndex: exactIndex,
       currentValue: points[exactIndex].value
     };
   }
@@ -725,7 +793,6 @@ function insertCurrentGlucosePoint(points: GlucoseChartPoint[], currentX: number
   if (clampedX <= firstX) {
     return {
       points: [{ ...points[0], label: currentLabel, pointType: "current_marker" }, ...points.slice(1)],
-      splitIndex: 0,
       currentValue: points[0].value
     };
   }
@@ -733,7 +800,6 @@ function insertCurrentGlucosePoint(points: GlucoseChartPoint[], currentX: number
   if (clampedX >= lastX) {
     return {
       points: [...points.slice(0, -1), { ...points[points.length - 1], label: currentLabel, pointType: "current_marker" }],
-      splitIndex: points.length - 1,
       currentValue: points[points.length - 1].value
     };
   }
@@ -752,8 +818,38 @@ function insertCurrentGlucosePoint(points: GlucoseChartPoint[], currentX: number
 
   return {
     points: [...points.slice(0, insertionIndex), currentPoint, ...points.slice(insertionIndex)],
-    splitIndex: insertionIndex,
     currentValue
+  };
+}
+
+function resolveGlucoseTone(value: number): GlucoseRiskTone {
+  if (value > 13) {
+    return "danger";
+  }
+  if (value > 10) {
+    return "warning";
+  }
+  return "safe";
+}
+
+function getGlucoseToneColors(tone: GlucoseRiskTone) {
+  if (tone === "danger") {
+    return {
+      line: GLUCOSE_DANGER_LINE,
+      fill: GLUCOSE_DANGER_FILL
+    };
+  }
+
+  if (tone === "warning") {
+    return {
+      line: GLUCOSE_WARNING_LINE,
+      fill: GLUCOSE_WARNING_FILL
+    };
+  }
+
+  return {
+    line: GLUCOSE_SAFE_LINE,
+    fill: GLUCOSE_SAFE_FILL
   };
 }
 
@@ -804,20 +900,29 @@ const styles = StyleSheet.create({
   ringPercentText: { color: colors.primary, fontSize: typography.caption, fontWeight: "800" },
   glucoseTrendCard: { width: "100%", borderRadius: 24, borderWidth: borders.standard, borderColor: "#D9E6E7", backgroundColor: "#F4FAFA", paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.md, gap: spacing.md, ...shadows.card },
   glucoseTrendHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.md },
-  glucoseTrendTitleBlock: { gap: spacing.xxs },
+  glucoseTrendTitleBlock: { flex: 1, gap: spacing.xxs },
   glucoseTrendTitle: { color: colors.text, fontSize: 26, lineHeight: 32, fontWeight: "900" },
   glucoseTrendSubtitle: { color: colors.textMuted, fontSize: 17, fontWeight: "600" },
-  glucoseTrendUnit: { color: colors.text, fontSize: 17, lineHeight: 24, fontWeight: "700", marginTop: spacing.md },
+  glucoseTrendValueBlock: { maxWidth: "52%", alignItems: "flex-end", gap: spacing.xxs },
+  glucoseTrendValueLine: { flexDirection: "row", alignItems: "flex-end", gap: spacing.xs },
+  glucoseTrendValueText: { color: colors.text, fontSize: 38, lineHeight: 40, fontWeight: "900", letterSpacing: -0.6, includeFontPadding: false },
+  glucoseTrendValueUnit: { color: colors.textSoft, fontSize: typography.caption, lineHeight: 16, fontWeight: "700", paddingBottom: 5, includeFontPadding: false },
+  glucoseTrendMetaBlock: { alignItems: "flex-end", gap: 2 },
+  glucoseTrendStatusText: { color: colors.textMuted, fontSize: typography.label, lineHeight: 20, fontWeight: "600", textAlign: "right" },
+  glucoseTrendHelperText: { color: colors.textSoft, fontSize: typography.caption, lineHeight: 18, textAlign: "right" },
   glucoseChartBlock: { gap: spacing.xs },
   glucoseChartFrame: { position: "relative", borderRadius: radii.md, backgroundColor: "transparent", overflow: "hidden" },
   glucoseSvg: { width: "100%" },
-  glucoseYAxis: { position: "absolute", top: 12, right: spacing.xs, bottom: 24, width: 24, justifyContent: "space-between", alignItems: "flex-end" },
+  glucoseYAxis: { position: "absolute", top: 12, right: spacing.xs, bottom: 38, width: 24, justifyContent: "space-between", alignItems: "flex-end" },
   glucoseYAxisLabel: { color: colors.text, fontSize: 15, fontWeight: "500" },
-  glucoseAxisLabels: { position: "relative", height: 20 },
-  glucoseAxisLabel: { position: "absolute", top: 0, width: 56, color: colors.text, fontSize: 14, fontWeight: "600" },
-  glucoseAxisLabelStart: { marginLeft: 0, textAlign: "left" },
-  glucoseAxisLabelCenter: { marginLeft: -28, textAlign: "center" },
-  glucoseAxisLabelEnd: { marginLeft: -56, textAlign: "right" },
+  glucoseAxisLabels: { position: "relative", height: 46 },
+  glucoseAxisItem: { position: "absolute", top: 0, width: 68 },
+  glucoseAxisItemStart: { marginLeft: 0, alignItems: "flex-start" },
+  glucoseAxisItemCenter: { marginLeft: -34, alignItems: "center" },
+  glucoseAxisItemEnd: { marginLeft: -68, alignItems: "flex-end" },
+  glucoseAxisLabel: { color: colors.text, fontSize: 13, fontWeight: "600", transform: [{ rotate: "-32deg" }] },
+  glucoseEmptyState: { minHeight: 194, borderRadius: radii.md, borderWidth: borders.standard, borderColor: "rgba(16, 35, 59, 0.08)", backgroundColor: "rgba(255, 255, 255, 0.56)", alignItems: "center", justifyContent: "center", gap: spacing.sm },
+  glucoseEmptyTitle: { color: colors.textSoft, fontSize: typography.bodyLarge, fontWeight: "700" },
   glucoseTrendFooter: { color: colors.text, fontSize: 17, lineHeight: 26, fontWeight: "600" },
   syncHeader: { gap: spacing.sm },
   syncBadge: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radii.pill, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.md, paddingVertical: 6 },

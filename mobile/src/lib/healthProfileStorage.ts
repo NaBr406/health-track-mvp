@@ -1,10 +1,15 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { HealthProfile } from "../types";
+import type { AuthSession, HealthProfile } from "../types";
+import { getDataScopeKey } from "./dataScope";
 
-const HEALTH_PROFILE_KEY = "health-track-mobile-health-profile";
+const HEALTH_PROFILE_KEY_PREFIX = "health-track-mobile-health-profile";
 
-export async function loadStoredHealthProfile() {
-  const raw = await AsyncStorage.getItem(HEALTH_PROFILE_KEY);
+function getHealthProfileKey(session?: AuthSession | null) {
+  return `${HEALTH_PROFILE_KEY_PREFIX}:${getDataScopeKey(session)}`;
+}
+
+export async function loadStoredHealthProfile(session?: AuthSession | null) {
+  const raw = await AsyncStorage.getItem(getHealthProfileKey(session));
 
   if (!raw) {
     return null;
@@ -17,10 +22,10 @@ export async function loadStoredHealthProfile() {
   }
 }
 
-export async function saveStoredHealthProfile(profile: HealthProfile) {
-  await AsyncStorage.setItem(HEALTH_PROFILE_KEY, JSON.stringify(profile));
+export async function saveStoredHealthProfile(profile: HealthProfile, session?: AuthSession | null) {
+  await AsyncStorage.setItem(getHealthProfileKey(session), JSON.stringify(profile));
 }
 
-export async function clearStoredHealthProfile() {
-  await AsyncStorage.removeItem(HEALTH_PROFILE_KEY);
+export async function clearStoredHealthProfile(session?: AuthSession | null) {
+  await AsyncStorage.removeItem(getHealthProfileKey(session));
 }

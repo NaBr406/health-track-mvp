@@ -2,12 +2,12 @@ import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { InputField, MonoValue, OutlineButton, Panel, SectionHeader } from "../components/clinical";
+import { InputField, OutlineButton } from "../components/clinical";
 import { ProfileAvatar } from "../components/ProfileAvatar";
 import { avatarPresets } from "../lib/avatarPresets";
 import { api } from "../lib/api";
 import { safeNumber, safeText } from "../lib/utils";
-import { borders, colors, fonts, layout, radii, spacing, typography } from "../theme/tokens";
+import { colors, fonts, layout, radii, shadows, spacing, typography } from "../theme/tokens";
 import type { HealthProfile } from "../types";
 
 type OnboardingWizardScreenProps = {
@@ -15,6 +15,7 @@ type OnboardingWizardScreenProps = {
   initialProfile: HealthProfile | null;
   onCancel: () => void;
   onComplete: (profile: HealthProfile) => Promise<void>;
+  onSkip: () => Promise<void>;
 };
 
 type WizardForm = {
@@ -36,7 +37,20 @@ type WizardForm = {
   notes: string;
 };
 
-const stepLabels = ["头像与目标", "关键指标", "用药与照护"];
+const stepMeta = [
+  {
+    title: "头像与昵称",
+    description: "先确认你的个人识别信息。"
+  },
+  {
+    title: "健康基线",
+    description: "补充当前目标和关键基线。"
+  },
+  {
+    title: "用药与照护重点",
+    description: "记录当前方案，方便后续长期跟踪。"
+  }
+] as const;
 
 function createForm(profile: HealthProfile | null): WizardForm {
   return {
@@ -63,7 +77,8 @@ export function OnboardingWizardScreen({
   mode,
   initialProfile,
   onCancel,
-  onComplete
+  onComplete,
+  onSkip
 }: OnboardingWizardScreenProps) {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<WizardForm>(() => createForm(initialProfile));
@@ -75,32 +90,20 @@ export function OnboardingWizardScreen({
     setStep(0);
   }, [initialProfile]);
 
-  const stepMeta = useMemo(() => {
-    switch (step) {
-      case 0:
-        return {
-          title: "先设置头像、昵称和当前目标",
-          description: "这里是唯一保留的结构化编辑入口，用来完善你的基础档案。之后每天的饮食、运动、睡眠与状态变化，都通过 AI 对话记录。"
-        };
-      case 1:
-        return {
-          title: "补齐关键生理指标",
-          description: "这些数据只作为长期基线，让首页建议和 AI 解读更贴近你的真实情况。"
-        };
-      default:
-        return {
-          title: "完善用药与照护重点",
-          description: "保存后会更新你的基准方案，首页与 AI 对话页都会按这份档案继续服务。"
-        };
+  const canProceed = useMemo(() => {
+    if (step === 0) {
+      return Boolean(form.nickname.trim());
     }
-  }, [step]);
 
-  const canProceed =
-    step === 0
-      ? Boolean(form.nickname.trim() && form.conditionLabel.trim() && form.primaryTarget.trim())
-      : step === 1
-        ? Boolean(form.weightKg.trim() && form.fastingGlucoseBaseline.trim())
-        : true;
+    if (step === 1) {
+      return Boolean(form.conditionLabel.trim() && form.primaryTarget.trim() && form.fastingGlucoseBaseline.trim() && form.bloodPressureBaseline.trim());
+    }
+
+    return true;
+  }, [form, step]);
+
+  const headerTitle = mode === "initial" ? "完善你的健康档案" : "编辑健康档案";
+  const headerDescription = mode === "initial" ? "3 步完成基础建档，支持稍后继续完善。" : "更新头像、基线和照护重点。";
 
   async function handlePickCustomAvatar() {
     setPickingAvatar(true);
@@ -110,7 +113,7 @@ export function OnboardingWizardScreen({
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
       if (!permission.granted) {
-        Alert.alert("无法访问相册", "请先允许应用访问相册，这样才能选择自定义头像。");
+        Alert.alert("无法访问相册", "请先允许应用访问相册，以便上传头像。");
         return;
       }
 
@@ -128,14 +131,14 @@ export function OnboardingWizardScreen({
 
       const asset = result.assets[0];
       const mimeType = asset.mimeType?.startsWith("image/") ? asset.mimeType : "image/jpeg";
-      const customAvatarUri = asset.base64 ? `data:${mimeType};base64,${asset.base64}` : asset.uri;
+      const avatarUri = asset.base64 ? `data:${mimeType};base64,${asset.base64}` : asset.uri;
 
       setForm((current) => ({
         ...current,
-        avatarUri: customAvatarUri
+        avatarUri
       }));
     } catch {
-      Alert.alert("头像更新失败", "当前环境暂时不可用相册选择，或这次没有成功读取图片，请稍后再试一次。");
+      Alert.alert("头像更新失败", "这次没有成功读取图片，请稍后再试。");
     } finally {
       setPickingAvatar(false);
     }
@@ -145,13 +148,6 @@ export function OnboardingWizardScreen({
     setForm((current) => ({
       ...current,
       avatarPresetId: presetId,
-      avatarUri: null
-    }));
-  }
-
-  function handleClearCustomAvatar() {
-    setForm((current) => ({
-      ...current,
       avatarUri: null
     }));
   }
@@ -188,6 +184,8 @@ export function OnboardingWizardScreen({
       });
 
       await onComplete(profile);
+    } catch {
+      Alert.alert("云端保存失败", "请检查网络后重试，避免账号资料出现不同步。");
     } finally {
       setSaving(false);
     }
@@ -196,86 +194,90 @@ export function OnboardingWizardScreen({
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Panel style={styles.heroCard}>
-          <SectionHeader
-            eyebrow={mode === "initial" ? "首次建档" : "编辑个人资料"}
-            title={mode === "initial" ? "先完成健康基线，再进入对话式管理" : "更新头像、昵称与健康基线"}
-            description="这里保留为唯一的结构化编辑入口。日常行为日志仍然统一通过 AI 对话完成。"
-            trailing={mode === "edit" ? <OutlineButton compact label="关闭" onPress={onCancel} variant="ghost" /> : undefined}
-          />
+        <View style={styles.heroCard}>
+          <View style={styles.heroTopRow}>
+            <View style={styles.heroCopy}>
+              <Text style={styles.heroEyebrow}>{mode === "initial" ? "健康档案" : "资料编辑"}</Text>
+              <Text style={styles.heroTitle}>{headerTitle}</Text>
+              <Text style={styles.heroDescription}>{headerDescription}</Text>
+            </View>
 
-          <View style={styles.promiseRow}>
-            <View style={styles.promiseChip}>
-              <Text style={styles.promiseChipLabel}>日常录入方式</Text>
-              <Text style={styles.promiseChipValue}>只通过 AI 对话</Text>
-            </View>
-            <View style={styles.promiseChip}>
-              <Text style={styles.promiseChipLabel}>本页可编辑</Text>
-              <Text style={styles.promiseChipValue}>头像 昵称 基础信息</Text>
-            </View>
-          </View>
-        </Panel>
-
-        <Panel>
-          <View style={styles.progressTop}>
-            <View style={styles.progressCopy}>
-              <Text style={styles.progressLabel}>步骤 {step + 1}</Text>
-              <Text style={styles.progressTitle}>{stepLabels[step]}</Text>
-              <Text style={styles.progressDescription}>{stepMeta.description}</Text>
-            </View>
-            <MonoValue value={`0${step + 1}`} unit="/03" />
+            {mode === "initial" ? (
+              <OutlineButton compact label="稍后完善" onPress={() => void onSkip()} variant="ghost" />
+            ) : (
+              <OutlineButton compact label="关闭" onPress={onCancel} variant="ghost" />
+            )}
           </View>
 
-          <View style={styles.progressRail}>
-            {stepLabels.map((label, index) => (
-              <View key={label} style={styles.progressItem}>
-                <View style={[styles.progressDot, index <= step ? styles.progressDotActive : null]}>
-                  <Text style={[styles.progressDotLabel, index <= step ? styles.progressDotLabelActive : null]}>{index + 1}</Text>
+          <View style={styles.progressSummaryRow}>
+            <View style={styles.progressChip}>
+              <Text style={styles.progressChipLabel}>当前进度</Text>
+              <Text style={styles.progressChipValue}>
+                {step + 1}/3
+              </Text>
+            </View>
+            <View style={styles.progressChip}>
+              <Text style={styles.progressChipLabel}>完成后效果</Text>
+              <Text style={styles.progressChipValue}>档案更完整</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.stepCard}>
+          <View style={styles.stepTopRow}>
+            <View>
+              <Text style={styles.stepLabel}>步骤 {step + 1}</Text>
+              <Text style={styles.stepTitle}>{stepMeta[step].title}</Text>
+              <Text style={styles.stepDescription}>{stepMeta[step].description}</Text>
+            </View>
+            <Text style={styles.stepFraction}>0{step + 1}/03</Text>
+          </View>
+
+          <View style={styles.stepRail}>
+            {stepMeta.map((item, index) => {
+              const active = index <= step;
+
+              return (
+                <View key={item.title} style={styles.stepRailItem}>
+                  <View style={[styles.stepRailDot, active ? styles.stepRailDotActive : null]}>
+                    <Text style={[styles.stepRailDotText, active ? styles.stepRailDotTextActive : null]}>{index + 1}</Text>
+                  </View>
+                  <Text style={[styles.stepRailText, index === step ? styles.stepRailTextActive : null]}>{item.title}</Text>
                 </View>
-                <Text style={[styles.progressItemLabel, index === step ? styles.progressItemLabelActive : null]}>{label}</Text>
-              </View>
-            ))}
-          </View>
-
-          <View style={styles.stepSummary}>
-            <Text style={styles.stepSummaryTitle}>{stepMeta.title}</Text>
+              );
+            })}
           </View>
 
           {step === 0 ? (
-            <>
+            <View style={styles.formBlock}>
               <View style={styles.avatarPreviewCard}>
-                <ProfileAvatar avatarUri={form.avatarUri} nickname={form.nickname} presetId={form.avatarPresetId} size={88} />
+                <ProfileAvatar avatarUri={form.avatarUri} nickname={form.nickname} presetId={form.avatarPresetId} size={86} />
                 <View style={styles.avatarPreviewCopy}>
-                  <View style={styles.avatarStatusRow}>
-                    <View style={[styles.avatarStatusChip, form.avatarUri ? styles.avatarStatusChipCustom : styles.avatarStatusChipPreset]}>
-                      <Ionicons
-                        color={form.avatarUri ? colors.primary : colors.warning}
-                        name={form.avatarUri ? "image-outline" : "sparkles-outline"}
-                        size={14}
-                      />
-                      <Text style={[styles.avatarStatusLabel, form.avatarUri ? styles.avatarStatusLabelCustom : styles.avatarStatusLabelPreset]}>
-                        {form.avatarUri ? "自定义头像" : "预设头像"}
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={styles.avatarPreviewName}>{form.nickname.trim() || "你的头像预览"}</Text>
-                  <Text style={styles.avatarPreviewHint}>
-                    {form.avatarUri ? "已从相册选择头像，你随时可以恢复为预设头像。" : "可以先选一个预设，也可以直接从相册选择自己的照片。"}
-                  </Text>
+                  <Text style={styles.avatarPreviewTitle}>{form.nickname.trim() || "你的头像预览"}</Text>
+                  <Text style={styles.avatarPreviewDescription}>设置一个容易识别的头像和昵称，后续记录会更自然。</Text>
                 </View>
               </View>
 
               <View style={styles.avatarActionRow}>
                 <OutlineButton
-                  label={pickingAvatar ? "读取相册中..." : "从相册选择"}
+                  label={pickingAvatar ? "读取中..." : "从相册选择"}
                   onPress={() => void handlePickCustomAvatar()}
                   variant="primary"
                   disabled={pickingAvatar}
                 />
-                {form.avatarUri ? <OutlineButton label="恢复预设头像" onPress={handleClearCustomAvatar} variant="secondary" /> : null}
+                {form.avatarUri ? (
+                  <OutlineButton
+                    label="恢复预设头像"
+                    onPress={() =>
+                      setForm((current) => ({
+                        ...current,
+                        avatarUri: null
+                      }))
+                    }
+                    variant="secondary"
+                  />
+                ) : null}
               </View>
-
-              <Text style={styles.helperText}>支持裁剪为方形头像，保存后会直接同步到当前设备上的个人资料页。</Text>
 
               <View style={styles.avatarGrid}>
                 {avatarPresets.map((preset) => {
@@ -283,20 +285,19 @@ export function OnboardingWizardScreen({
 
                   return (
                     <Pressable
-                      key={preset.id}
                       accessibilityRole="button"
+                      key={preset.id}
                       onPress={() => handleSelectPreset(preset.id)}
                       style={({ pressed }) => [
                         styles.avatarOption,
                         selected ? styles.avatarOptionSelected : null,
-                        form.avatarUri ? styles.avatarOptionDimmed : null,
                         pressed ? styles.avatarOptionPressed : null
                       ]}
                     >
-                      <ProfileAvatar nickname={form.nickname} presetId={preset.id} size={60} />
+                      <ProfileAvatar nickname={form.nickname} presetId={preset.id} size={56} />
                       <View style={styles.avatarOptionLabelRow}>
                         <Text style={[styles.avatarOptionLabel, selected ? styles.avatarOptionLabelSelected : null]}>{preset.label}</Text>
-                        {selected ? <Ionicons color={colors.primary} name="checkmark-circle" size={16} /> : null}
+                        {selected ? <Ionicons color={colors.primary} name="checkmark-circle" size={14} /> : null}
                       </View>
                     </Pressable>
                   );
@@ -309,76 +310,23 @@ export function OnboardingWizardScreen({
                 value={form.nickname}
                 onChangeText={(value) => setForm((current) => ({ ...current, nickname: value }))}
               />
+            </View>
+          ) : null}
+
+          {step === 1 ? (
+            <View style={styles.formBlock}>
               <InputField
-                label="疾病标签"
+                label="健康状态"
                 placeholder="例如：2 型糖尿病"
                 value={form.conditionLabel}
                 onChangeText={(value) => setForm((current) => ({ ...current, conditionLabel: value }))}
               />
               <InputField
-                label="当前阶段目标"
+                label="当前目标"
                 placeholder="例如：降低餐后波动并稳定体重"
                 value={form.primaryTarget}
                 onChangeText={(value) => setForm((current) => ({ ...current, primaryTarget: value }))}
               />
-            </>
-          ) : null}
-
-          {step === 1 ? (
-            <>
-              <View style={styles.doubleRow}>
-                <View style={styles.flexField}>
-                  <InputField
-                    keyboardType="number-pad"
-                    label="年龄"
-                    value={form.age}
-                    onChangeText={(value) => setForm((current) => ({ ...current, age: value }))}
-                  />
-                </View>
-                <View style={styles.flexField}>
-                  <InputField
-                    label="生理性别"
-                    value={form.biologicalSex}
-                    onChangeText={(value) => setForm((current) => ({ ...current, biologicalSex: value }))}
-                  />
-                </View>
-              </View>
-              <View style={styles.doubleRow}>
-                <View style={styles.flexField}>
-                  <InputField
-                    keyboardType="decimal-pad"
-                    label="身高 cm"
-                    value={form.heightCm}
-                    onChangeText={(value) => setForm((current) => ({ ...current, heightCm: value }))}
-                  />
-                </View>
-                <View style={styles.flexField}>
-                  <InputField
-                    keyboardType="decimal-pad"
-                    label="当前体重 kg"
-                    value={form.weightKg}
-                    onChangeText={(value) => setForm((current) => ({ ...current, weightKg: value }))}
-                  />
-                </View>
-              </View>
-              <View style={styles.doubleRow}>
-                <View style={styles.flexField}>
-                  <InputField
-                    keyboardType="decimal-pad"
-                    label="目标体重 kg"
-                    value={form.targetWeightKg}
-                    onChangeText={(value) => setForm((current) => ({ ...current, targetWeightKg: value }))}
-                  />
-                </View>
-                <View style={styles.flexField}>
-                  <InputField
-                    keyboardType="number-pad"
-                    label="静息心率"
-                    value={form.restingHeartRate}
-                    onChangeText={(value) => setForm((current) => ({ ...current, restingHeartRate: value }))}
-                  />
-                </View>
-              </View>
               <InputField
                 label="空腹血糖基线"
                 placeholder="例如：7.2 mmol/L"
@@ -391,11 +339,11 @@ export function OnboardingWizardScreen({
                 value={form.bloodPressureBaseline}
                 onChangeText={(value) => setForm((current) => ({ ...current, bloodPressureBaseline: value }))}
               />
-            </>
+            </View>
           ) : null}
 
           {step === 2 ? (
-            <>
+            <View style={styles.formBlock}>
               <InputField
                 label="当前用药"
                 multiline
@@ -410,46 +358,55 @@ export function OnboardingWizardScreen({
                 onChangeText={(value) => setForm((current) => ({ ...current, careFocus: value }))}
               />
               <InputField
-                label="补充备注"
+                label="备注摘要"
                 multiline
                 placeholder="例如：对高 GI 主食敏感，午后久坐时波动更明显"
                 value={form.notes}
                 onChangeText={(value) => setForm((current) => ({ ...current, notes: value }))}
               />
-            </>
+            </View>
           ) : null}
 
-          <View style={styles.footerNote}>
-            <Text style={styles.footerNoteText}>保存后会更新你的个人基线方案。后续每天只需要通过 AI 对话描述行为、症状和感受，不再使用日常表单录入。</Text>
+          <View style={styles.footerHintCard}>
+            <Text style={styles.footerHintText}>日常记录可通过 AI 对话快速完成，资料页只保留少量核心信息维护。</Text>
           </View>
 
           <View style={styles.footerActions}>
-            <OutlineButton
-              disabled={step === 0}
-              fullWidth
-              label="上一步"
-              onPress={() => setStep((current) => Math.max(0, current - 1))}
-              variant="secondary"
-            />
-            {step < stepLabels.length - 1 ? (
+            {step === 0 ? (
               <OutlineButton
-                disabled={!canProceed}
                 fullWidth
+                label={mode === "initial" ? "稍后完善" : "关闭"}
+                onPress={mode === "initial" ? () => void onSkip() : onCancel}
+                variant="secondary"
+              />
+            ) : (
+              <OutlineButton
+                fullWidth
+                label="上一步"
+                onPress={() => setStep((current) => Math.max(0, current - 1))}
+                variant="secondary"
+              />
+            )}
+
+            {step < stepMeta.length - 1 ? (
+              <OutlineButton
+                fullWidth
+                disabled={!canProceed}
                 label="下一步"
                 onPress={() => setStep((current) => current + 1)}
                 variant="primary"
               />
             ) : (
               <OutlineButton
-                disabled={!canProceed || saving}
                 fullWidth
+                disabled={!canProceed || saving}
                 label={saving ? "保存中..." : mode === "initial" ? "完成建档" : "保存资料"}
                 onPress={() => void handleSubmit()}
                 variant="primary"
               />
             )}
           </View>
-        </Panel>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -467,158 +424,154 @@ const styles = StyleSheet.create({
     gap: spacing.lg
   },
   heroCard: {
-    backgroundColor: colors.surfaceTint
+    borderRadius: 28,
+    backgroundColor: "#F5F9FF",
+    padding: spacing.xl,
+    gap: spacing.lg,
+    ...shadows.lift
   },
-  promiseRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.md
-  },
-  promiseChip: {
-    flex: 1,
-    minWidth: 140,
-    borderRadius: radii.md,
-    borderWidth: borders.standard,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    padding: spacing.md,
-    gap: spacing.xs
-  },
-  promiseChipLabel: {
-    color: colors.textSoft,
-    fontSize: typography.caption,
-    fontWeight: "600"
-  },
-  promiseChipValue: {
-    color: colors.text,
-    fontFamily: fonts.display,
-    fontSize: typography.bodyLarge,
-    fontWeight: "700"
-  },
-  progressTop: {
+  heroTopRow: {
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: spacing.md
   },
-  progressCopy: {
+  heroCopy: {
     flex: 1,
     gap: spacing.xs
   },
-  progressLabel: {
+  heroEyebrow: {
     color: colors.primary,
-    fontSize: typography.label,
-    fontWeight: "700"
+    fontSize: typography.caption,
+    fontWeight: "800"
   },
-  progressTitle: {
+  heroTitle: {
     color: colors.text,
     fontFamily: fonts.display,
-    fontSize: typography.titleMedium,
-    lineHeight: 38,
-    fontWeight: "700"
+    fontSize: typography.titleSmall,
+    lineHeight: 32,
+    fontWeight: "800"
   },
-  progressDescription: {
+  heroDescription: {
     color: colors.textMuted,
     fontSize: typography.body,
-    lineHeight: 24
+    lineHeight: 22
   },
-  progressRail: {
+  progressSummaryRow: {
     flexDirection: "row",
-    gap: spacing.sm
+    gap: spacing.md
   },
-  progressItem: {
+  progressChip: {
     flex: 1,
-    alignItems: "center",
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+    padding: spacing.md,
     gap: spacing.xs
   },
-  progressDot: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: borders.standard,
-    borderColor: colors.divider,
-    backgroundColor: colors.surfaceMuted,
-    alignItems: "center",
-    justifyContent: "center"
+  progressChipLabel: {
+    color: colors.textSoft,
+    fontSize: typography.caption,
+    fontWeight: "700"
   },
-  progressDotActive: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary
+  progressChipValue: {
+    color: colors.text,
+    fontSize: typography.bodyLarge,
+    fontWeight: "800"
   },
-  progressDotLabel: {
+  stepCard: {
+    borderRadius: 28,
+    backgroundColor: colors.surface,
+    padding: spacing.xl,
+    gap: spacing.lg,
+    ...shadows.card
+  },
+  stepTopRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: spacing.md
+  },
+  stepLabel: {
+    color: colors.primary,
+    fontSize: typography.caption,
+    fontWeight: "800"
+  },
+  stepTitle: {
+    color: colors.text,
+    fontFamily: fonts.display,
+    fontSize: typography.bodyLarge,
+    fontWeight: "800",
+    marginTop: spacing.xs
+  },
+  stepDescription: {
+    color: colors.textMuted,
+    fontSize: typography.body,
+    lineHeight: 22,
+    marginTop: spacing.xs
+  },
+  stepFraction: {
     color: colors.textSoft,
     fontSize: typography.label,
     fontWeight: "700"
   },
-  progressDotLabelActive: {
+  stepRail: {
+    flexDirection: "row",
+    gap: spacing.sm
+  },
+  stepRailItem: {
+    flex: 1,
+    alignItems: "center",
+    gap: spacing.xs
+  },
+  stepRailDot: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#EEF2F7",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  stepRailDotActive: {
+    backgroundColor: colors.primary
+  },
+  stepRailDotText: {
+    color: colors.textSoft,
+    fontSize: typography.label,
+    fontWeight: "700"
+  },
+  stepRailDotTextActive: {
     color: colors.inverseText
   },
-  progressItemLabel: {
+  stepRailText: {
     color: colors.textSoft,
     fontSize: typography.caption,
     textAlign: "center"
   },
-  progressItemLabelActive: {
+  stepRailTextActive: {
     color: colors.text,
     fontWeight: "700"
   },
-  stepSummary: {
-    borderRadius: radii.md,
-    backgroundColor: colors.surfaceWarm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm
-  },
-  stepSummaryTitle: {
-    color: colors.text,
-    fontSize: typography.bodyLarge,
-    lineHeight: 26,
-    fontWeight: "700"
+  formBlock: {
+    gap: spacing.md
   },
   avatarPreviewCard: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
-    borderRadius: radii.lg,
-    backgroundColor: colors.surfaceMuted,
+    borderRadius: 22,
+    backgroundColor: "#F8FBFF",
     padding: spacing.md
   },
   avatarPreviewCopy: {
     flex: 1,
     gap: spacing.xs
   },
-  avatarStatusRow: {
-    flexDirection: "row"
-  },
-  avatarStatusChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    borderRadius: radii.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6
-  },
-  avatarStatusChipCustom: {
-    backgroundColor: colors.primarySoft
-  },
-  avatarStatusChipPreset: {
-    backgroundColor: colors.warningSoft
-  },
-  avatarStatusLabel: {
-    fontSize: typography.caption,
-    fontWeight: "700"
-  },
-  avatarStatusLabelCustom: {
-    color: colors.primary
-  },
-  avatarStatusLabelPreset: {
-    color: colors.warning
-  },
-  avatarPreviewName: {
+  avatarPreviewTitle: {
     color: colors.text,
     fontSize: typography.bodyLarge,
     fontWeight: "800"
   },
-  avatarPreviewHint: {
+  avatarPreviewDescription: {
     color: colors.textMuted,
     fontSize: typography.body,
     lineHeight: 22
@@ -628,11 +581,6 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: spacing.sm
   },
-  helperText: {
-    color: colors.textSoft,
-    fontSize: typography.caption,
-    lineHeight: 20
-  },
   avatarGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -640,25 +588,19 @@ const styles = StyleSheet.create({
   },
   avatarOption: {
     width: "31%",
-    minWidth: 96,
-    borderRadius: radii.md,
-    borderWidth: borders.standard,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
+    minWidth: 92,
+    borderRadius: 18,
+    backgroundColor: "#F9FAFC",
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.md,
     alignItems: "center",
     gap: spacing.sm
   },
   avatarOptionSelected: {
-    borderColor: colors.primary,
     backgroundColor: colors.primarySoft
   },
-  avatarOptionDimmed: {
-    opacity: 0.55
-  },
   avatarOptionPressed: {
-    opacity: 0.92
+    opacity: 0.88
   },
   avatarOptionLabelRow: {
     flexDirection: "row",
@@ -673,23 +615,15 @@ const styles = StyleSheet.create({
   avatarOptionLabelSelected: {
     color: colors.primary
   },
-  doubleRow: {
-    flexDirection: "row",
-    gap: spacing.md
+  footerHintCard: {
+    borderRadius: 18,
+    backgroundColor: "#F9FAFC",
+    padding: spacing.md
   },
-  flexField: {
-    flex: 1
-  },
-  footerNote: {
-    borderRadius: radii.md,
-    backgroundColor: colors.backgroundAccent,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md
-  },
-  footerNoteText: {
+  footerHintText: {
     color: colors.textMuted,
     fontSize: typography.body,
-    lineHeight: 24
+    lineHeight: 22
   },
   footerActions: {
     flexDirection: "row",
