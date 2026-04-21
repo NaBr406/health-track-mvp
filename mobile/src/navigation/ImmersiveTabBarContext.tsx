@@ -52,7 +52,7 @@ export function useImmersiveTabBar() {
 }
 
 export function useImmersiveTabBarScroll() {
-  const { bottomInset, setHidden } = useImmersiveTabBar();
+  const { bottomInset, hidden, setHidden } = useImmersiveTabBar();
   const lastOffsetRef = useRef(0);
   const draggingRef = useRef(false);
   const directionRef = useRef<"up" | "down" | null>(null);
@@ -129,6 +129,7 @@ export function useImmersiveTabBarScroll() {
 
   return {
     bottomInset,
+    hidden,
     onScroll,
     onScrollBeginDrag,
     onScrollEndDrag,

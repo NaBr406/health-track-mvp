@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
-import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Animated, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "../../lib/api";
 import { formatTime, getTodayString } from "../../lib/utils";
@@ -28,7 +28,8 @@ export function AIChatScreen({
   const [capabilityNote, setCapabilityNote] = useState("");
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const insets = useSafeAreaInsets();
-  const { bottomInset, onScroll, onScrollBeginDrag, onScrollEndDrag, scrollEventThrottle } = useImmersiveTabBarScroll();
+  const { bottomInset, hidden, onScroll, onScrollBeginDrag, onScrollEndDrag, scrollEventThrottle } = useImmersiveTabBarScroll();
+  const composerMarginAnimation = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     void loadThread();
@@ -78,8 +79,18 @@ export function AIChatScreen({
   const voiceButtonDisabled = sending;
   const sendButtonDisabled = sending || !draft.trim();
   const composerPaddingBottom = Platform.OS === "ios" ? Math.max(insets.bottom, spacing.xs) : spacing.xs;
-  const hiddenComposerFloor = Platform.OS === "android" ? Math.max(insets.bottom, spacing.xxxl) : Math.max(insets.bottom, spacing.sm);
-  const composerMarginBottom = bottomInset > 0 ? bottomInset - composerPaddingBottom : hiddenComposerFloor;
+  const hiddenComposerFloor = Math.max(insets.bottom, spacing.sm);
+  const visibleComposerMarginBottom = bottomInset > 0 ? bottomInset - composerPaddingBottom : hiddenComposerFloor;
+
+  useEffect(() => {
+    Animated.spring(composerMarginAnimation, {
+      damping: 22,
+      mass: 0.9,
+      stiffness: 240,
+      toValue: hidden ? hiddenComposerFloor : visibleComposerMarginBottom,
+      useNativeDriver: false
+    }).start();
+  }, [composerMarginAnimation, hidden, hiddenComposerFloor, visibleComposerMarginBottom]);
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safeArea}>
@@ -132,11 +143,11 @@ export function AIChatScreen({
             showsVerticalScrollIndicator={false}
           />
 
-          <View
+          <Animated.View
             style={[
               styles.composer,
               {
-                marginBottom: composerMarginBottom,
+                marginBottom: composerMarginAnimation,
                 paddingBottom: composerPaddingBottom
               }
             ]}
@@ -198,7 +209,7 @@ export function AIChatScreen({
                 <Ionicons color={colors.inverseText} name="arrow-up" size={20} />
               </Pressable>
             </View>
-          </View>
+          </Animated.View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>

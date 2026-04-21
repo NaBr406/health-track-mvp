@@ -172,9 +172,11 @@ function RingMetricCard({ metric }: { metric: MetricCardMeta }) {
   return (
     <View style={styles.metricCard}>
       <MetricCardHeader metric={metric} />
-      <View style={styles.metricRow}>
+      <View style={styles.metricBody}>
         <MetricValueBlock metric={metric} />
-        <CircularProgressRing progress={metric.progress ?? 0} />
+        <View style={styles.metricRingRow}>
+          <CircularProgressRing progress={metric.progress ?? 0} />
+        </View>
       </View>
     </View>
   );
@@ -217,12 +219,16 @@ function MetricCardHeader({ metric }: { metric: MetricCardMeta }) {
 function MetricValueBlock({ metric }: { metric: MetricCardMeta }) {
   return (
     <View style={styles.metricValueBlock}>
-      <Text style={styles.metricValueText}>
-        {metric.valueText}
-        {metric.unitText ? <Text style={styles.metricUnitText}> {metric.unitText}</Text> : null}
-      </Text>
-      {metric.statusText ? <Text style={styles.metricStatusText}>{metric.statusText}</Text> : null}
-      {metric.helperText ? <Text style={styles.metricHelperText}>{metric.helperText}</Text> : null}
+      <View style={styles.metricValueLine}>
+        <Text style={styles.metricValueText}>
+          {metric.valueText}
+        </Text>
+        {metric.unitText ? <Text style={styles.metricUnitText}>{metric.unitText}</Text> : null}
+      </View>
+      <View style={styles.metricMetaBlock}>
+        {metric.statusText ? <Text style={styles.metricStatusText}>{metric.statusText}</Text> : null}
+        {metric.helperText ? <Text style={styles.metricHelperText}>{metric.helperText}</Text> : null}
+      </View>
     </View>
   );
 }
@@ -777,17 +783,20 @@ const styles = StyleSheet.create({
   sectionHeader: { gap: spacing.xxs },
   sectionEyebrow: { color: colors.textSoft, fontSize: typography.caption, fontWeight: "700", letterSpacing: 0.3 },
   sectionTitle: { color: colors.text, fontSize: typography.titleSmall, lineHeight: 30, fontWeight: "800" },
-  metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  metricCard: { width: "48%", minWidth: 154, flexGrow: 1, borderRadius: radii.lg, borderWidth: borders.standard, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, gap: spacing.md, ...shadows.card },
+  metricGrid: { flexDirection: "row", flexWrap: "wrap", alignItems: "stretch", gap: spacing.sm },
+  metricCard: { flexBasis: "48%", minWidth: 154, minHeight: 188, flexGrow: 1, flexShrink: 1, borderRadius: radii.lg, borderWidth: borders.standard, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, gap: spacing.md, ...shadows.card },
   metricHeader: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   metricIconWrap: { width: 36, height: 36, borderRadius: 12, backgroundColor: colors.primarySoft, alignItems: "center", justifyContent: "center" },
   metricHeaderCopy: { flex: 1, gap: 2 },
   metricLabel: { color: colors.text, fontSize: typography.bodyLarge, fontWeight: "800" },
   metricDescriptor: { color: colors.textSoft, fontSize: typography.caption, lineHeight: 18 },
-  metricRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md },
-  metricValueBlock: { flex: 1, gap: spacing.xs },
-  metricValueText: { color: colors.text, fontSize: 40, lineHeight: 44, fontWeight: "800", letterSpacing: -0.5 },
-  metricUnitText: { color: colors.textSoft, fontSize: typography.caption, fontWeight: "600" },
+  metricBody: { flex: 1, justifyContent: "space-between", gap: spacing.md },
+  metricRingRow: { alignItems: "flex-end" },
+  metricValueBlock: { gap: spacing.sm },
+  metricValueLine: { minHeight: 44, flexDirection: "row", alignItems: "flex-end", flexWrap: "nowrap", gap: spacing.xs },
+  metricMetaBlock: { minHeight: 40, gap: 2 },
+  metricValueText: { color: colors.text, fontSize: 40, lineHeight: 44, fontWeight: "800", letterSpacing: -0.5, includeFontPadding: false },
+  metricUnitText: { color: colors.textSoft, fontSize: typography.caption, lineHeight: 16, fontWeight: "600", paddingBottom: 6, includeFontPadding: false },
   metricStatusText: { color: colors.textMuted, fontSize: typography.label, lineHeight: 20, fontWeight: "600" },
   metricHelperText: { color: colors.textSoft, fontSize: typography.caption, lineHeight: 18 },
   ringWrap: { width: 64, height: 64, alignItems: "center", justifyContent: "center" },
