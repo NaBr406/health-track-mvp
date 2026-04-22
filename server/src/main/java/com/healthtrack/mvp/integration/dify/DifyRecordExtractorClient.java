@@ -44,6 +44,15 @@ public class DifyRecordExtractorClient {
     private String profileInputVariable;
 
     public Optional<RecordExtractionResult> extract(Long userId, String message, UserProfile profile) {
+        return extract(userId, message, profile, null);
+    }
+
+    public Optional<RecordExtractionResult> extract(
+            Long userId,
+            String message,
+            UserProfile profile,
+            ExtractorContext extractorContext
+    ) {
         if (!StringUtils.hasText(baseUrl) || !StringUtils.hasText(apiKey) || !StringUtils.hasText(message)) {
             return Optional.empty();
         }
@@ -51,7 +60,7 @@ public class DifyRecordExtractorClient {
         Map<String, Object> inputs = new LinkedHashMap<>();
         inputs.put(inputVariable, message);
         if (StringUtils.hasText(profileInputVariable)) {
-            inputs.put(profileInputVariable, writeUserProfile(profile));
+            inputs.put(profileInputVariable, writeUserProfile(profile, extractorContext));
         }
 
         Optional<RecordExtractionResult> extraction = extractWithInputs(userId, inputs);
@@ -178,7 +187,7 @@ public class DifyRecordExtractorClient {
         return null;
     }
 
-    private Map<String, Object> writeUserProfile(UserProfile profile) {
+    private Map<String, Object> writeUserProfile(UserProfile profile, ExtractorContext extractorContext) {
         Map<String, Object> payload = new LinkedHashMap<>();
         if (profile != null) {
             payload.put("conditionLabel", profile.getConditionLabel());
@@ -197,7 +206,34 @@ public class DifyRecordExtractorClient {
             payload.put("careFocus", profile.getCareFocus());
             payload.put("healthGoal", profile.getHealthGoal());
         }
+        if (extractorContext != null && extractorContext.hasDynamicContext()) {
+            payload.put("currentGlucoseMmol", extractorContext.currentGlucoseMmol());
+            payload.put("currentGlucoseSource", extractorContext.currentGlucoseSource());
+            payload.put("activeGlucoseRiskLevel", extractorContext.activeGlucoseRiskLevel());
+            payload.put("activeCalibrationApplied", extractorContext.activeCalibrationApplied());
+            payload.put("activePeakGlucoseMmol", extractorContext.activePeakGlucoseMmol());
+            payload.put("activePeakHourOffset", extractorContext.activePeakHourOffset());
+            payload.put("activeReturnToBaselineHourOffset", extractorContext.activeReturnToBaselineHourOffset());
+            payload.put("activeGlucoseForecast8h", writeGlucoseForecast(extractorContext.activeGlucoseForecast8h()));
+            payload.put("activeForecastSource", extractorContext.activeForecastSource());
+        }
         return payload;
+    }
+
+    private List<Map<String, Object>> writeGlucoseForecast(List<GlucoseForecastPoint> points) {
+        if (points == null || points.isEmpty()) {
+            return List.of();
+        }
+
+        return points.stream()
+                .map(point -> {
+                    Map<String, Object> payload = new LinkedHashMap<>();
+                    payload.put("hourOffset", point.hourOffset());
+                    payload.put("predictedGlucoseMmol", point.predictedGlucoseMmol());
+                    payload.put("pointType", point.pointType());
+                    return payload;
+                })
+                .toList();
     }
 
     private Double toDouble(BigDecimal value) {
@@ -344,5 +380,29 @@ public class DifyRecordExtractorClient {
             Double predictedGlucoseMmol,
             String pointType
     ) {
+    }
+
+    public record ExtractorContext(
+            Double currentGlucoseMmol,
+            String currentGlucoseSource,
+            String activeGlucoseRiskLevel,
+            Boolean activeCalibrationApplied,
+            Double activePeakGlucoseMmol,
+            Double activePeakHourOffset,
+            Double activeReturnToBaselineHourOffset,
+            List<GlucoseForecastPoint> activeGlucoseForecast8h,
+            String activeForecastSource
+    ) {
+        public boolean hasDynamicContext() {
+            return currentGlucoseMmol != null
+                    || StringUtils.hasText(currentGlucoseSource)
+                    || StringUtils.hasText(activeGlucoseRiskLevel)
+                    || activeCalibrationApplied != null
+                    || activePeakGlucoseMmol != null
+                    || activePeakHourOffset != null
+                    || activeReturnToBaselineHourOffset != null
+                    || (activeGlucoseForecast8h != null && !activeGlucoseForecast8h.isEmpty())
+                    || StringUtils.hasText(activeForecastSource);
+        }
     }
 }

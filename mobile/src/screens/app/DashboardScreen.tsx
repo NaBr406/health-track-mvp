@@ -73,6 +73,9 @@ const GLUCOSE_WARNING_LINE = "#D4A227";
 const GLUCOSE_WARNING_FILL = "rgba(212, 162, 39, 0.22)";
 const GLUCOSE_DANGER_LINE = "#D96060";
 const GLUCOSE_DANGER_FILL = "rgba(217, 96, 96, 0.24)";
+const FORECAST_WINDOW_HOURS = 8;
+const FORECAST_HOUR_OFFSET_PRECISION = 2;
+const CURRENT_MARKER_SNAP_HOURS = 0.12;
 
 export function DashboardScreen({
   session,
@@ -537,7 +540,27 @@ function hasGlucoseForecast(snapshot: DashboardSnapshot | null) {
 }
 
 function getGlucoseForecast(snapshot: DashboardSnapshot | null) {
-  return snapshot?.glucoseForecast8h?.filter((point) => Number.isFinite(point.predictedGlucoseMmol)) ?? [];
+  const dedupedForecast = new Map<number, GlucoseForecastPoint>();
+
+  for (const point of snapshot?.glucoseForecast8h ?? []) {
+    if (!Number.isFinite(point.hourOffset) || !Number.isFinite(point.predictedGlucoseMmol)) {
+      continue;
+    }
+
+    const normalizedHourOffset = normalizeForecastHourOffset(point.hourOffset);
+    const normalizedPoint: GlucoseForecastPoint = {
+      ...point,
+      hourOffset: normalizedHourOffset,
+      predictedGlucoseMmol: roundChartValue(point.predictedGlucoseMmol)
+    };
+    const existingPoint = dedupedForecast.get(normalizedHourOffset);
+
+    if (!existingPoint || shouldReplaceForecastPoint(existingPoint, normalizedPoint)) {
+      dedupedForecast.set(normalizedHourOffset, normalizedPoint);
+    }
+  }
+
+  return [...dedupedForecast.values()].sort((left, right) => left.hourOffset - right.hourOffset);
 }
 
 function buildForecastChart(snapshot: DashboardSnapshot | null, forecast: GlucoseForecastPoint[], now: Date): GlucoseChartSeriesMeta {
@@ -773,12 +796,13 @@ function insertCurrentGlucosePoint(points: GlucoseChartPoint[], currentX: number
   const firstX = points[0].xValue;
   const lastX = points[points.length - 1].xValue;
   const clampedX = clamp(currentX, firstX, lastX);
-  const exactIndex = points.findIndex((point) => Math.abs(point.xValue - clampedX) < 0.001);
+  const nearestIndex = findNearestGlucosePointIndex(points, clampedX);
+  const snapTolerance = resolveCurrentMarkerSnapHours(points);
 
-  if (exactIndex >= 0) {
+  if (nearestIndex >= 0 && Math.abs(points[nearestIndex].xValue - clampedX) <= snapTolerance) {
     return {
       points: points.map((point, index) =>
-        index === exactIndex
+        index === nearestIndex
           ? {
               ...point,
               label: currentLabel,
@@ -786,7 +810,7 @@ function insertCurrentGlucosePoint(points: GlucoseChartPoint[], currentX: number
             }
           : point
       ),
-      currentValue: points[exactIndex].value
+      currentValue: points[nearestIndex].value
     };
   }
 
@@ -820,6 +844,69 @@ function insertCurrentGlucosePoint(points: GlucoseChartPoint[], currentX: number
     points: [...points.slice(0, insertionIndex), currentPoint, ...points.slice(insertionIndex)],
     currentValue
   };
+}
+
+function normalizeForecastHourOffset(hourOffset: number) {
+  return Number(clamp(hourOffset, 0, FORECAST_WINDOW_HOURS).toFixed(FORECAST_HOUR_OFFSET_PRECISION));
+}
+
+function shouldReplaceForecastPoint(existingPoint: GlucoseForecastPoint, nextPoint: GlucoseForecastPoint) {
+  const existingPriority = resolveForecastPointPriority(existingPoint.pointType);
+  const nextPriority = resolveForecastPointPriority(nextPoint.pointType);
+
+  if (existingPriority !== nextPriority) {
+    return nextPriority > existingPriority;
+  }
+
+  return true;
+}
+
+function resolveForecastPointPriority(pointType?: string) {
+  if (pointType === "measured_anchor") {
+    return 2;
+  }
+  if (pointType === "forecast") {
+    return 1;
+  }
+  return 0;
+}
+
+function findNearestGlucosePointIndex(points: GlucoseChartPoint[], targetX: number) {
+  return points.reduce(
+    (bestIndex, point, index, collection) => {
+      if (bestIndex < 0) {
+        return index;
+      }
+
+      const bestDistance = Math.abs(collection[bestIndex].xValue - targetX);
+      const nextDistance = Math.abs(point.xValue - targetX);
+      return nextDistance < bestDistance ? index : bestIndex;
+    },
+    -1
+  );
+}
+
+function resolveCurrentMarkerSnapHours(points: GlucoseChartPoint[]) {
+  if (points.length < 2) {
+    return CURRENT_MARKER_SNAP_HOURS;
+  }
+
+  const smallestGap = points.slice(1).reduce((bestGap, point, index) => {
+    const gap = Math.abs(point.xValue - points[index].xValue);
+    if (gap <= 0.001) {
+      return bestGap;
+    }
+    if (bestGap === null || gap < bestGap) {
+      return gap;
+    }
+    return bestGap;
+  }, null as number | null);
+
+  if (smallestGap == null) {
+    return CURRENT_MARKER_SNAP_HOURS;
+  }
+
+  return Math.min(CURRENT_MARKER_SNAP_HOURS, smallestGap / 3);
 }
 
 function resolveGlucoseTone(value: number): GlucoseRiskTone {

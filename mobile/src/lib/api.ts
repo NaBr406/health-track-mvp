@@ -432,7 +432,7 @@ export const api = {
     return request<ChatThread>(`/api/interaction/thread${buildQuery({ date })}`, {}, () => getFallbackChatThread(identity.scopeKey, date));
   },
 
-  async sendChatMessage(payload: ChatSendPayload) {
+  async sendChatMessage(payload: ChatSendPayload, options?: { signal?: AbortSignal }) {
     const identity = await resolveIdentity();
 
     if (!identity.session) {
@@ -441,7 +441,8 @@ export const api = {
 
     return request<ChatSendResult>("/api/interaction/messages", {
       method: "POST",
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: options?.signal
     });
   },
 

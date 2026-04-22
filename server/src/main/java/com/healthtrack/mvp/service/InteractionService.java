@@ -80,7 +80,7 @@ public class InteractionService {
         CopyOnWriteArrayList<ChatMessageResponse> thread = ensureThread(userId, focusDate);
         thread.add(newMessage("user", message));
 
-        ParsedInteraction parsed = parseMessage(userId, message);
+        ParsedInteraction parsed = parseMessage(userId, focusDate, message);
         List<String> changes = persistInteraction(userId, focusDate, message, inputMode, parsed);
         adviceService.refreshDailyAdvice(userId, focusDate);
         DashboardSnapshotResponse snapshot = getDashboardSnapshot(userId, focusDate);
@@ -343,12 +343,70 @@ public class InteractionService {
         return changes;
     }
 
-    private ParsedInteraction parseMessage(Long userId, String message) {
+    private ParsedInteraction parseMessage(Long userId, LocalDate focusDate, String message) {
         UserProfile profile = userProfileRepository.findByUserId(userId).orElse(null);
-        return difyRecordExtractorClient.extract(userId, message, profile)
+        DayState state = dayStateStore.computeIfAbsent(dayKey(userId, focusDate), ignored -> new DayState());
+        DifyRecordExtractorClient.ExtractorContext extractorContext = buildExtractorContext(userId, focusDate, state);
+
+        return difyRecordExtractorClient.extract(userId, message, profile, extractorContext)
                 .filter(DifyRecordExtractorClient.RecordExtractionResult::hasStructuredData)
                 .map(this::toParsedInteraction)
                 .orElseGet(() -> parseMessageLocally(message));
+    }
+
+    private DifyRecordExtractorClient.ExtractorContext buildExtractorContext(Long userId, LocalDate focusDate, DayState state) {
+        CurrentGlucoseContext currentGlucoseContext = resolveCurrentGlucoseContext(userId, focusDate, state);
+        return new DifyRecordExtractorClient.ExtractorContext(
+                currentGlucoseContext.glucoseMmol(),
+                currentGlucoseContext.source(),
+                state.glucoseRiskLevel(),
+                state.calibrationApplied(),
+                state.peakGlucoseMmol(),
+                state.peakHourOffset(),
+                state.returnToBaselineHourOffset(),
+                state.glucoseForecast8h(),
+                state.forecastSource()
+        );
+    }
+
+    private CurrentGlucoseContext resolveCurrentGlucoseContext(Long userId, LocalDate focusDate, DayState state) {
+        if (state.glucoseMmol() != null) {
+            return new CurrentGlucoseContext(state.glucoseMmol(), "dialog_reported");
+        }
+
+        Double recordedGlucose = careRecordRepository
+                .findByUserIdAndRecordedOnBetweenOrderByRecordedOnDescCreatedAtDesc(userId, focusDate, focusDate)
+                .stream()
+                .map(CareRecord::getGlucoseMmol)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+        if (recordedGlucose != null) {
+            return new CurrentGlucoseContext(recordedGlucose, "care_record");
+        }
+
+        Double forecastAnchorGlucose = resolveForecastAnchorGlucose(state);
+        if (forecastAnchorGlucose != null) {
+            return new CurrentGlucoseContext(forecastAnchorGlucose, "forecast_anchor");
+        }
+
+        return new CurrentGlucoseContext(null, null);
+    }
+
+    private Double resolveForecastAnchorGlucose(DayState state) {
+        if (state.forecastAnchorGlucoseMmol() != null) {
+            return state.forecastAnchorGlucoseMmol();
+        }
+        if (state.glucoseForecast8h().isEmpty()) {
+            return null;
+        }
+
+        return state.glucoseForecast8h().stream()
+                .filter(point -> point.hourOffset() != null && point.hourOffset() == 0)
+                .map(DifyRecordExtractorClient.GlucoseForecastPoint::predictedGlucoseMmol)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(state.glucoseForecast8h().get(0).predictedGlucoseMmol());
     }
 
     private ParsedInteraction parseMessageLocally(String message) {
@@ -870,6 +928,12 @@ public class InteractionService {
             Double returnToBaselineHourOffset,
             List<DifyRecordExtractorClient.GlucoseForecastPoint> glucoseForecast8h,
             Double forecastAnchorGlucoseMmol
+    ) {
+    }
+
+    private record CurrentGlucoseContext(
+            Double glucoseMmol,
+            String source
     ) {
     }
 
