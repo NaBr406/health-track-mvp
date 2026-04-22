@@ -6,6 +6,10 @@ import type { AuthSession } from "../types";
 
 const TOKEN_KEY = "health-track-mobile-token";
 const SESSION_KEY = "health-track-mobile-session";
+type StoredSessionInvalidationListener = () => void | Promise<void>;
+
+let storedSessionInvalidationListener: StoredSessionInvalidationListener | null = null;
+let storedSessionInvalidationTask: Promise<void> | null = null;
 
 export async function saveStoredSession(session: AuthSession) {
   await AsyncStorage.multiSet([
@@ -33,4 +37,24 @@ export async function loadToken() {
 
 export async function clearStoredSession() {
   await AsyncStorage.multiRemove([TOKEN_KEY, SESSION_KEY]);
+}
+
+export function setStoredSessionInvalidationListener(listener: StoredSessionInvalidationListener | null) {
+  storedSessionInvalidationListener = listener;
+}
+
+export async function invalidateStoredSession() {
+  if (storedSessionInvalidationTask) {
+    await storedSessionInvalidationTask;
+    return;
+  }
+
+  storedSessionInvalidationTask = (async () => {
+    await clearStoredSession();
+    await storedSessionInvalidationListener?.();
+  })().finally(() => {
+    storedSessionInvalidationTask = null;
+  });
+
+  await storedSessionInvalidationTask;
 }

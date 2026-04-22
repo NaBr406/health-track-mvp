@@ -1,36 +1,36 @@
 # 生命卫士 MVP
 
-生命卫士是一个面向健康管理场景的 monorepo，当前主交付是 Android 移动端和 Spring Boot 后端。产品已经从传统的多表单打卡切换到 `Chat-as-Interface`：饮食、运动、睡眠、血糖等日常信息优先通过自然语言对话进入系统，再由后端归档并驱动每日建议刷新。
+`生命卫士` 是一个面向健康管理场景的 monorepo，当前主交付为 Android 移动端和 Spring Boot 后端。项目把日常记录入口尽量收敛到聊天式界面：饮食、运动、睡眠、血糖等信息优先通过 `AI Chat` 录入，再由后端归档、刷新仪表盘，并生成每日建议。
 
 ## 当前状态
 
-- Android App 是当前主交付，`web/` 仅保留为原型目录
-- 支持登录 / 注册 / 访客模式；后端不可用时会回退到本地离线演示数据
-- Dashboard 会展示今日 AI 建议、热量和运动概览、血糖趋势与 8 小时预测
-- AI Chat 是唯一的日常输入入口，文本发送可用，语音入口已预留
-- 后端会尝试从对话里抽取饮食、运动、护理、睡眠和血糖信息并落库
-- Dify 当前主要用于“每日 AI 建议”和“记录抽取增强”，聊天页还不是完整的 Dify 多轮对话
+- 主交付为 `mobile/` Android App 和 `server/` API 服务，`web/` 为历史原型目录，当前不维护
+- 支持登录、注册和游客模式；游客态与登录态使用独立的数据作用域
+- Dashboard 会展示今日 AI 建议、热量/运动概览、血糖趋势和 8 小时预测
+- `AI Chat` 是统一记录入口，文本发送可用；语音按钮已预留，但当前仍走文本提交通道
+- 后端会把聊天内容解析为饮食、运动、护理、睡眠和血糖记录，并刷新当天建议
+- Dify 当前主要用于两类能力：每日 AI 建议、聊天记录结构化抽取；未配置时会自动回退到本地 mock/规则逻辑
 
-## 目录结构
+## 仓库结构
 
 ```text
 .
-├─ mobile/      Expo + React Native + TypeScript 移动端
-├─ server/      Spring Boot 后端
-├─ docs/        补充设计 / 接入文档
-├─ scripts/     常用启动脚本
-├─ web/         Web 原型目录
-├─ docker-compose.yml
-└─ README.md
+|-- mobile/                Expo + React Native Android 客户端
+|-- server/                Spring Boot 后端
+|-- docs/                  Dify 接入和设计文档
+|-- scripts/               常用启动脚本
+|-- web/                   历史 Web 原型
+|-- docker-compose.yml     MySQL / Redis / Server 联调
+`-- README.md
 ```
 
 ## 技术栈
 
 ### Mobile
 
-- Expo 55
-- React 19
-- React Native 0.83
+- Expo `~55.0.13`
+- React `19.2.0`
+- React Native `0.83.4`
 - TypeScript
 - React Navigation
 - AsyncStorage
@@ -39,8 +39,8 @@
 
 ### Server
 
-- Spring Boot 3.3
-- Java 17
+- Spring Boot `3.3.5`
+- Java `17`
 - Spring Security + JWT
 - Spring Data JPA
 - MySQL 8 / H2
@@ -48,116 +48,152 @@
 - springdoc-openapi
 - Dify Workflow API
 
-## 当前能力
+## 已实现能力
 
 ### 移动端
 
 - `Onboarding Wizard`
-  - 首次建档
-  - 编辑昵称、头像、疾病标签、阶段目标、基础指标、用药与照护重点
+  - 三步式健康档案引导
+  - 支持昵称、头像、健康状态、目标、基线指标、用药与护理重点编辑
 - `Dashboard`
-  - 今日 AI 建议摘要卡
-  - 热量和运动环形概览
-  - 血糖趋势或 8 小时预测图
-  - 方案详情页，展示推演依据、系统观察和参考指标
+  - 今日 AI 建议卡片
+  - 热量与运动概览
+  - 血糖历史趋势与 8 小时预测
+  - 建议详情与反馈
 - `AI Chat`
-  - 统一的自然语言记录入口
-  - 文本发送可用
+  - 统一自然语言记录入口
   - 发送后会触发后端归档和建议刷新
-  - 语音按钮已预留，后续可接录音与转写
+  - 游客态也可使用，登录后切换到账号数据空间
 - `Profile`
-  - 头像、昵称和基础健康档案编辑
-  - 最近 7 日统计概览
-  - 登录同步 / 退出登录
-- `Auth & Fallback`
-  - 登录 / 注册
-  - 访客模式与本地离线回退
+  - 基础健康档案查看与编辑
+  - 资料详情页、设置页、退出登录
+- `Fallback`
+  - 后端不可用时自动回退本地 mock 数据
+  - 游客态记录和登录态记录彼此隔离
 
 ### 后端接口
 
 - `/api/auth/*` 登录与注册
-- `/api/profile` 健康档案查询和更新
-- `/api/dashboard/summary` 与 `/api/dashboard/snapshot` 仪表盘数据
+- `/api/profile` 健康档案读取与更新
+- `/api/dashboard/summary` / `/api/dashboard/snapshot` 仪表盘数据
 - `/api/dashboard/adjustment-feedback` 建议反馈
-- `/api/interaction/thread` 与 `/api/interaction/messages` 对话线程和消息提交
+- `/api/interaction/thread` / `/api/interaction/messages` 聊天线程与消息提交
 - `/api/advice/daily` 每日建议
-- `/api/records/*` 饮食、运动、护理记录
-- Swagger UI：`http://localhost:8080/swagger-ui.html`
-- OpenAPI JSON：`http://localhost:8080/v3/api-docs`
+- `/api/records/diet`
+- `/api/records/exercise`
+- `/api/records/care`
+- Swagger UI: `http://localhost:8080/swagger-ui.html`
+- OpenAPI JSON: `http://localhost:8080/v3/api-docs`
 
 ## 快速开始
 
 ### 推荐方式：Windows + Android 本地开发
 
-先准备环境变量文件：
+建议先准备好：
+
+- Node.js 与 npm
+- Java 17
+- Android SDK
+- 一个名为 `HealthTrack_Pixel_35` 的 Android Emulator
+- PowerShell
+
+> `scripts/dev-mobile.ps1` 当前会直接尝试启动名为 `HealthTrack_Pixel_35` 的模拟器；如果你本地 AVD 名称不同，需要先改脚本里的 `$avdName`。
+
+#### 1. 准备后端环境变量
 
 ```powershell
 Copy-Item .env.example .env
-Copy-Item mobile/.env.example mobile/.env
 ```
 
-确认 `mobile/.env` 中的 `EXPO_PUBLIC_API_BASE_URL` 指向后端：
+把根目录 `.env` 里的 `SPRING_PROFILES_ACTIVE` 改成下面其一：
+
+- `local`
+  - 推荐本地快速体验
+  - 使用 H2 文件数据库
+  - 不依赖 MySQL / Redis
+- `dev`
+  - 使用 MySQL + Redis
+  - 需要先执行 `docker compose up -d mysql redis`
+
+#### 2. 准备移动端环境变量
+
+仓库当前没有提交 `mobile/.env.example`，请直接创建 `mobile/.env`：
+
+```powershell
+Set-Content mobile\.env "EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:8080"
+```
+
+常见地址如下：
 
 - Android 模拟器：`http://10.0.2.2:8080`
 - Android 真机：`http://<你的局域网 IP>:8080`
 
-然后直接运行：
+> 如果不显式设置 `EXPO_PUBLIC_API_BASE_URL`，开发环境会回退到代码里写死的远端地址 `http://150.158.117.174`，本地联调时不建议依赖这个默认值。
+
+#### 3. 一键启动
 
 ```powershell
 .\scripts\dev-all.ps1
 ```
 
-这个脚本会分别打开两个窗口：
+这个脚本会打开两个独立窗口：
 
 - `scripts/dev-server.ps1`
-  - 会读取根目录 `.env`
-  - 如果没有设置 `SPRING_PROFILES_ACTIVE`，默认使用 `local`
-  - `local` 模式使用 H2 文件数据库，不依赖 MySQL / Redis
+  - 读取根目录 `.env`
+  - 如果未设置 `SPRING_PROFILES_ACTIVE`，默认使用 `local`
+  - 自动准备 Maven 运行环境
 - `scripts/dev-mobile.ps1`
-  - 自动检查 Android SDK / Java
+  - 自动检测 Android SDK / Java
   - 启动模拟器
   - 安装 Android debug app
-  - 启动 Metro dev client
+  - 启动 Metro dev client（端口 `8081`）
 
-### 手动启动
+## 手动启动
 
-#### 1. 启动后端
+### 1. 启动后端
 
-如果你想走本地最轻量模式：
+#### 轻量本地模式：`local`
 
 ```powershell
 Copy-Item .env.example .env
-$env:SPRING_PROFILES_ACTIVE = "local"
 cd server
+$env:SPRING_PROFILES_ACTIVE = "local"
 .\mvnw.cmd spring-boot:run
 ```
 
-如果你想连 MySQL / Redis，先启动依赖：
+启动后可访问：
+
+- Server: `http://localhost:8080`
+- Swagger UI: `http://localhost:8080/swagger-ui.html`
+- H2 Console: `http://localhost:8080/h2-console`
+
+#### MySQL + Redis 联调模式：`dev`
 
 ```powershell
 Copy-Item .env.example .env
 docker compose up -d mysql redis
 cd server
+$env:SPRING_PROFILES_ACTIVE = "dev"
 .\mvnw.cmd spring-boot:run
 ```
 
-#### 2. 启动移动端
+### 2. 启动移动端
 
 ```powershell
-Copy-Item mobile/.env.example mobile/.env
+Set-Content mobile\.env "EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:8080"
 cd mobile
 npm install
 npm run android
 ```
 
-如果已经生成原生工程并使用 dev client，也可以：
+如果你已经完成过原生工程构建，也可以直接启动 dev client：
 
 ```powershell
 cd mobile
 npm run start:dev-client
 ```
 
-### Docker Compose 全栈启动
+## Docker Compose
 
 `docker-compose.yml` 当前会启动：
 
@@ -165,16 +201,25 @@ npm run start:dev-client
 - Redis
 - Server
 
-启动方式：
+使用方式：
 
 ```powershell
 Copy-Item .env.example .env
 docker compose up --build
 ```
 
-默认后端地址：
+默认服务地址：
 
-- `http://localhost:8080`
+- Server: `http://localhost:8080`
+
+## Demo 账号
+
+在数据库为空且 `app.seed.enabled=true` 时，后端会自动灌入演示数据。默认账号：
+
+- 邮箱：`demo@healthtrack.local`
+- 密码：`Demo123456!`
+
+这个逻辑位于 [SeedDataInitializer.java](d:/githubs/health-track-mvp/server/src/main/java/com/healthtrack/mvp/config/SeedDataInitializer.java)。
 
 ## 环境变量
 
@@ -234,38 +279,24 @@ cd mobile\android
 mobile/android/app/build/outputs/apk/release/app-release.apk
 ```
 
-### 瘦身版 Release APK
-
-推荐只打 `arm64-v8a`，并开启混淆与资源压缩：
+### 更小的 arm64 Release APK
 
 ```powershell
 cd mobile\android
 .\gradlew.bat assembleRelease '-PreactNativeArchitectures=arm64-v8a' '-Pandroid.enableMinifyInReleaseBuilds=true' '-Pandroid.enableShrinkResourcesInReleaseBuilds=true'
 ```
 
-当前项目实测：
-
-- 通用 APK 约 `77 MB`
-- 瘦身后的 arm64 APK 约 `25 MB`
-
-## 常用脚本
-
-- `scripts/dev-all.ps1`
-- `scripts/dev-server.ps1`
-- `scripts/dev-mobile.ps1`
-- `scripts/dev-server.sh`
-- `scripts/dev-mobile.sh`
-- `scripts/dev-setup.sh`
+> 当前 `release` 仍使用 debug keystore 签名，只适合内部验证；如果要正式分发，需要先修改 [build.gradle](d:/githubs/health-track-mvp/mobile/android/app/build.gradle) 中的签名配置。
 
 ## 已知限制
 
-- 自定义头像目前只保存在移动端本地资料中，后端暂未提供头像上传与跨设备同步
-- AI Chat 当前仍是“业务输入入口 + 归档刷新”，不是完整的大模型多轮对话
-- 语音按钮目前只保留入口，尚未接入录音与转写
-- 后端不可用时虽然可以离线演示，但离线数据不会自动回写到云端
+- `AI Chat` 目前是“聊天外观 + 业务归档入口”，还不是完整的 Dify 多轮对话
+- 语音按钮当前仅保留入口，尚未接入录音与转写
 - `web/` 目录不是当前主交付面
+- `dev-mobile.ps1` 对本地 Android 模拟器名称有硬编码依赖
 
 ## 相关文档
 
-- Dify 接入说明：`docs/dify-integration-guide.md`
-- 移动端补充说明：`mobile/README.md`
+- [docs/dify-integration-guide.md](d:/githubs/health-track-mvp/docs/dify-integration-guide.md)
+- [docs/dify-chatflow-tool-routing-guide.md](d:/githubs/health-track-mvp/docs/dify-chatflow-tool-routing-guide.md)
+- [mobile/README.md](d:/githubs/health-track-mvp/mobile/README.md)

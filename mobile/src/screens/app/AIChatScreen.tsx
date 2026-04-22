@@ -15,7 +15,7 @@ import {
   View
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { api } from "../../lib/api";
+import { api, isAuthExpiredError } from "../../lib/api";
 import { formatTime, getTodayString } from "../../lib/utils";
 import { useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
 import { borders, colors, layout, radii, spacing, typography } from "../../theme/tokens";
@@ -39,7 +39,6 @@ type UIChatMessage = ChatMessage & {
   linkedUserMessageId?: string;
 };
 
-const REQUEST_TIMEOUT_MS = 120000;
 const LOADING_STAGE_DELAYS_MS = [2000, 5000, 9000] as const;
 const LOADING_STAGE_VARIANTS = [
   ["正在思考...", "正在理解你的问题..."],
@@ -65,10 +64,6 @@ function pickLoadingCopy(stage: number, seed: number) {
 
 function resolveErrorKind(error: unknown): MessageErrorKind {
   if (error instanceof Error) {
-    if (error.name === "AbortError") {
-      return "timeout";
-    }
-
     const normalized = error.message.toLowerCase();
     if (
       normalized.includes("network") ||
@@ -187,8 +182,6 @@ export function AIChatScreen({
   const listRef = useRef<FlatList<UIChatMessage>>(null);
   const messagesRef = useRef<UIChatMessage[]>([]);
   const loadingTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const requestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const activeAbortControllerRef = useRef<AbortController | null>(null);
   const insets = useSafeAreaInsets();
   const { bottomInset, hidden, onScroll, onScrollBeginDrag, onScrollEndDrag, scrollEventThrottle } = useImmersiveTabBarScroll();
   const baselineLayoutHeightRef = useRef(0);
@@ -224,13 +217,6 @@ export function AIChatScreen({
     loadingTimersRef.current = [];
   }
 
-  function clearRequestTimeout() {
-    if (requestTimeoutRef.current) {
-      clearTimeout(requestTimeoutRef.current);
-      requestTimeoutRef.current = null;
-    }
-  }
-
   function startLoadingFeedback(placeholderId: string, seed: number) {
     clearLoadingTimers();
     updateMessages((current) =>
@@ -261,10 +247,16 @@ export function AIChatScreen({
   }
 
   async function loadThread() {
-    const thread = await api.getChatThread(getTodayString());
-    updateMessages(thread.messages.map(toUiMessage));
-    setDataSource(thread.dataSource);
-    scrollToBottom(false);
+    try {
+      const thread = await api.getChatThread(getTodayString());
+      updateMessages(thread.messages.map(toUiMessage));
+      setDataSource(thread.dataSource);
+      scrollToBottom(false);
+    } catch (error) {
+      if (!isAuthExpiredError(error)) {
+        throw error;
+      }
+    }
   }
 
   function replacePlaceholderWithError(
@@ -353,21 +345,9 @@ export function AIChatScreen({
     setSending(true);
     startLoadingFeedback(options.placeholderId, options.seed);
 
-    const controller = session ? new AbortController() : null;
-    activeAbortControllerRef.current = controller;
-    clearRequestTimeout();
-
-    if (controller) {
-      requestTimeoutRef.current = setTimeout(() => {
-        controller.abort();
-      }, REQUEST_TIMEOUT_MS);
-    }
-
     try {
-      const result = await api.sendChatMessage(payload, controller ? { signal: controller.signal } : undefined);
+      const result = await api.sendChatMessage(payload);
       clearLoadingTimers();
-      clearRequestTimeout();
-      activeAbortControllerRef.current = null;
 
       reconcileSuccessfulSend(result, options.userMessageId, options.placeholderId);
       setDataSource(result.dataSource);
@@ -375,8 +355,6 @@ export function AIChatScreen({
       scrollToBottom();
     } catch (error) {
       clearLoadingTimers();
-      clearRequestTimeout();
-      activeAbortControllerRef.current = null;
 
       replacePlaceholderWithError(options.placeholderId, payload, options.userMessageId, resolveErrorKind(error));
       scrollToBottom();
@@ -542,8 +520,6 @@ export function AIChatScreen({
   useEffect(() => {
     return () => {
       clearLoadingTimers();
-      clearRequestTimeout();
-      activeAbortControllerRef.current?.abort();
     };
   }, []);
 

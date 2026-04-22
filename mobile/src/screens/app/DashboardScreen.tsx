@@ -12,7 +12,7 @@ import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindo
 import Svg, { Circle, Line, Path } from "react-native-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { OutlineButton, Panel } from "../../components/clinical";
-import { api } from "../../lib/api";
+import { api, isAuthExpiredError } from "../../lib/api";
 import { formatDateTime, getTodayString, parseLeadingNumber } from "../../lib/utils";
 import { useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
 import { borders, colors, layout, radii, shadows, spacing, typography } from "../../theme/tokens";
@@ -117,6 +117,10 @@ export function DashboardScreen({
     try {
       // 具体读服务端还是本地兜底数据，由 API 层统一决定。
       setSnapshot(await api.getDashboardSnapshot(getTodayString()));
+    } catch (error) {
+      if (!isAuthExpiredError(error)) {
+        throw error;
+      }
     } finally {
       setRefreshing(false);
     }

@@ -16,7 +16,7 @@ import {
   hasValue,
   type StatusTone
 } from "../../lib/profilePresentation";
-import { api } from "../../lib/api";
+import { api, isAuthExpiredError } from "../../lib/api";
 import { average, formatDateTime, formatDisplayDate } from "../../lib/utils";
 import { useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
 import { colors, fonts, layout, radii, shadows, spacing, typography } from "../../theme/tokens";
@@ -77,6 +77,10 @@ export function ProfileScreen({
       const [nextSnapshot, nextThread] = await Promise.all([api.getDashboardSnapshot(), api.getChatThread()]);
       setSnapshot(nextSnapshot);
       setThread(nextThread);
+    } catch (error) {
+      if (!isAuthExpiredError(error)) {
+        throw error;
+      }
     } finally {
       setLoading(false);
     }

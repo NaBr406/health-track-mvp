@@ -7,7 +7,7 @@
  * 2. 服务端是否可用。
  * 3. 本地缓存是否需要拿来做补偿或恢复。
  */
-import { loadToken } from "./auth";
+import { invalidateStoredSession, loadToken } from "./auth";
 import { getDataScopeKey, loadDataScope } from "./dataScope";
 import { loadStoredHealthProfile, saveStoredHealthProfile } from "./healthProfileStorage";
 import {
@@ -31,6 +31,17 @@ import type {
 
 const RELEASE_API_BASE_URL = "http://150.158.117.174";
 const API_BASE_URL = __DEV__ ? process.env.EXPO_PUBLIC_API_BASE_URL || RELEASE_API_BASE_URL : RELEASE_API_BASE_URL;
+
+export class AuthExpiredError extends Error {
+  constructor(message = "Session expired. Please sign in again.") {
+    super(message);
+    this.name = "AuthExpiredError";
+  }
+}
+
+export function isAuthExpiredError(error: unknown): error is AuthExpiredError {
+  return error instanceof AuthExpiredError || (error instanceof Error && error.name === "AuthExpiredError");
+}
 
 type LoginPayload = {
   email: string;
@@ -133,6 +144,11 @@ async function request<T>(path: string, init: RequestInit = {}, fallback?: T | (
       headers
     });
 
+    if (response.status === 401 || response.status === 403) {
+      await invalidateStoredSession();
+      throw new AuthExpiredError();
+    }
+
     if (!response.ok) {
       throw new Error(await response.text());
     }
@@ -143,6 +159,10 @@ async function request<T>(path: string, init: RequestInit = {}, fallback?: T | (
 
     return (await response.json()) as T;
   } catch (error) {
+    if (isAuthExpiredError(error)) {
+      throw error;
+    }
+
     if (fallback !== undefined) {
       return (await resolveFallback()) as T;
     }
@@ -403,7 +423,11 @@ export const api = {
       const recovered = await recoverServerProfile(identity, remote, stored);
       const merged = mergeServerProfile(recovered, stored, identity.session);
       return persistScopedProfile(identity, merged);
-    } catch {
+    } catch (error) {
+      if (isAuthExpiredError(error)) {
+        throw error;
+      }
+
       return stored;
     }
   },
@@ -461,7 +485,7 @@ export const api = {
     return request<ChatThread>(`/api/interaction/thread${buildQuery({ date })}`, {}, () => getFallbackChatThread(identity.scopeKey, date));
   },
 
-  async sendChatMessage(payload: ChatSendPayload, options?: { signal?: AbortSignal }) {
+  async sendChatMessage(payload: ChatSendPayload) {
     const identity = await resolveIdentity();
 
     if (!identity.session) {
@@ -470,8 +494,7 @@ export const api = {
 
     return request<ChatSendResult>("/api/interaction/messages", {
       method: "POST",
-      body: JSON.stringify(payload),
-      signal: options?.signal
+      body: JSON.stringify(payload)
     });
   },
 

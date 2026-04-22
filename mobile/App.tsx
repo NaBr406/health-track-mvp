@@ -14,8 +14,13 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { clearStoredSession, loadStoredSession, saveStoredSession } from "./src/lib/auth";
-import { api } from "./src/lib/api";
+import {
+  clearStoredSession,
+  loadStoredSession,
+  saveStoredSession,
+  setStoredSessionInvalidationListener
+} from "./src/lib/auth";
+import { api, isAuthExpiredError } from "./src/lib/api";
 import { loadStoredHealthProfile } from "./src/lib/healthProfileStorage";
 import { loadOnboardingGatePassed, saveOnboardingGatePassed } from "./src/lib/onboardingGate";
 import { MainTabsNavigator } from "./src/navigation/MainTabsNavigator";
@@ -67,6 +72,31 @@ export default function App() {
   const [refreshToken, setRefreshToken] = useState(0);
   const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
 
+  function resetToSignedOutState(options?: { openAuth?: boolean }) {
+    setSession(null);
+    setHealthProfile(null);
+    setHasOnboarded(false);
+    setRefreshToken((current) => current + 1);
+    setAuthOpen(Boolean(options?.openAuth));
+
+    navigationRef.current?.resetRoot({
+      index: 0,
+      routes: [{ name: "Main" }]
+    });
+  }
+
+  useEffect(() => {
+    setStoredSessionInvalidationListener(() => {
+      resetToSignedOutState({ openAuth: true });
+      setBooting(false);
+      Alert.alert("Session expired", "Please sign in again to continue loading your account data.");
+    });
+
+    return () => {
+      setStoredSessionInvalidationListener(null);
+    };
+  }, []);
+
   useEffect(() => {
     async function bootstrap() {
       // 先用本地缓存完成启动，再交给 API 层与服务端状态做一次对齐。
@@ -82,7 +112,11 @@ export default function App() {
       setBooting(false);
     }
 
-    void bootstrap();
+    void bootstrap().catch((error) => {
+      if (!isAuthExpiredError(error)) {
+        throw error;
+      }
+    });
   }, []);
 
   async function handleSignedIn(nextSession: AuthSession) {
@@ -115,16 +149,7 @@ export default function App() {
 
   async function handleLogout() {
     await clearStoredSession();
-
-    setSession(null);
-    setHealthProfile(null);
-    setHasOnboarded(false);
-    setRefreshToken((current) => current + 1);
-
-    navigationRef.current?.resetRoot({
-      index: 0,
-      routes: [{ name: "Main" }]
-    });
+    resetToSignedOutState();
   }
 
   async function handleOnboardingComplete(profile: HealthProfile) {
