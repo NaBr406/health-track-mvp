@@ -20,6 +20,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 饮食、运动和护理等结构化记录的 REST 接口。
+ */
 @RestController
 @RequestMapping("/api/records")
 @RequiredArgsConstructor

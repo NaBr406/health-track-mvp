@@ -1,3 +1,6 @@
+/**
+ * 当前 AI 调整建议的详情页，用来展开解释预测依据和调整原因。
+ */
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";

@@ -1,7 +1,11 @@
-import { useState } from "react";
+/**
+ * 登录弹层内容，承载登录、注册和游客兜底入口。
+ */
+import { useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { InputField, OutlineButton, Panel, SectionHeader } from "../components/clinical";
 import { api } from "../lib/api";
+import { useScrollFocusedInputIntoView } from "../lib/useScrollFocusedInputIntoView";
 import { colors, layout, radii, spacing, typography } from "../theme/tokens";
 import type { AuthSession } from "../types";
 
@@ -11,6 +15,9 @@ type LoginScreenProps = {
 };
 
 export function LoginScreen({ onClose, onSignedIn }: LoginScreenProps) {
+  const KeyboardContainer = Platform.OS === "ios" ? KeyboardAvoidingView : View;
+  const scrollRef = useRef<ScrollView>(null);
+  const { onFieldFocus, onScroll, scrollEventThrottle } = useScrollFocusedInputIntoView(scrollRef);
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("demo@healthtrack.local");
   const [password, setPassword] = useState("Demo123456!");
@@ -37,10 +44,21 @@ export function LoginScreen({ onClose, onSignedIn }: LoginScreenProps) {
   }
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.keyboardWrap}>
+    <KeyboardContainer
+      {...(Platform.OS === "ios"
+        ? {
+            behavior: "padding" as const
+          }
+        : {})}
+      style={styles.keyboardWrap}
+    >
       <ScrollView
         contentContainerStyle={styles.scrollContent}
+        keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
+        onScroll={onScroll}
+        ref={scrollRef}
+        scrollEventThrottle={scrollEventThrottle}
         showsVerticalScrollIndicator={false}
       >
         <Panel style={styles.sheet}>
@@ -62,18 +80,20 @@ export function LoginScreen({ onClose, onSignedIn }: LoginScreenProps) {
             <OutlineButton fullWidth label="注册" onPress={() => setMode("register")} selected={mode === "register"} variant="ghost" />
           </View>
 
-          {mode === "register" ? <InputField label="昵称" value={nickname} onChangeText={setNickname} /> : null}
+          {mode === "register" ? <InputField label="昵称" onFocus={onFieldFocus} value={nickname} onChangeText={setNickname} /> : null}
 
           <InputField
             autoCapitalize="none"
             keyboardType="email-address"
             label="邮箱"
+            onFocus={onFieldFocus}
             value={email}
             onChangeText={setEmail}
           />
           <InputField
             autoCapitalize="none"
             label="密码"
+            onFocus={onFieldFocus}
             secureTextEntry
             value={password}
             onChangeText={setPassword}
@@ -89,7 +109,7 @@ export function LoginScreen({ onClose, onSignedIn }: LoginScreenProps) {
           />
         </Panel>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardContainer>
   );
 }
 

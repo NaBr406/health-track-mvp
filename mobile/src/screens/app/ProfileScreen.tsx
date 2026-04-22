@@ -1,3 +1,6 @@
+/**
+ * 档案主页，汇总账号状态、完善度和最近的健康洞察。
+ */
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";

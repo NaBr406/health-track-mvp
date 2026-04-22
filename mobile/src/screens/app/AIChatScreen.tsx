@@ -2,8 +2,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
 import {
   Animated,
+  Dimensions,
   Easing,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -37,7 +39,7 @@ type UIChatMessage = ChatMessage & {
   linkedUserMessageId?: string;
 };
 
-const REQUEST_TIMEOUT_MS = 45000;
+const REQUEST_TIMEOUT_MS = 120000;
 const LOADING_STAGE_DELAYS_MS = [2000, 5000, 9000] as const;
 const LOADING_STAGE_VARIANTS = [
   ["正在思考...", "正在理解你的问题..."],
@@ -173,10 +175,14 @@ export function AIChatScreen({
   onConversationCommitted,
   onRequestSignIn
 }: AIChatScreenProps) {
+  const KeyboardContainer = Platform.OS === "ios" ? KeyboardAvoidingView : View;
   const [messages, setMessages] = useState<UIChatMessage[]>([]);
   const [dataSource, setDataSource] = useState<"server" | "mock">("mock");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [layoutHeight, setLayoutHeight] = useState(0);
   const [capabilityNote, setCapabilityNote] = useState("");
   const listRef = useRef<FlatList<UIChatMessage>>(null);
   const messagesRef = useRef<UIChatMessage[]>([]);
@@ -185,7 +191,8 @@ export function AIChatScreen({
   const activeAbortControllerRef = useRef<AbortController | null>(null);
   const insets = useSafeAreaInsets();
   const { bottomInset, hidden, onScroll, onScrollBeginDrag, onScrollEndDrag, scrollEventThrottle } = useImmersiveTabBarScroll();
-  const composerMarginAnimation = useRef(new Animated.Value(0)).current;
+  const baselineLayoutHeightRef = useRef(0);
+  const composerLiftAnimation = useRef(new Animated.Value(0)).current;
 
   function updateMessages(nextValue: UIChatMessage[] | ((current: UIChatMessage[]) => UIChatMessage[])) {
     setMessages((current) => {
@@ -198,6 +205,18 @@ export function AIChatScreen({
 
   function scrollToBottom(animated = true) {
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated }));
+  }
+
+  function handleComposerFocus() {
+    scrollToBottom(false);
+  }
+
+  function handleLayout(nextHeight: number) {
+    setLayoutHeight((current) => (current === nextHeight ? current : nextHeight));
+
+    if (!keyboardVisible || nextHeight > baselineLayoutHeightRef.current) {
+      baselineLayoutHeightRef.current = nextHeight;
+    }
   }
 
   function clearLoadingTimers() {
@@ -472,18 +491,53 @@ export function AIChatScreen({
   }, [healthProfile?.updatedAt, session?.userId]);
 
   useEffect(() => {
+    const showSubscription = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow", (event) => {
+      const screenHeight = Dimensions.get("screen").height;
+      const nextKeyboardHeight = Math.max(event.endCoordinates.height, Math.max(0, screenHeight - event.endCoordinates.screenY));
+
+      setKeyboardVisible(true);
+      setKeyboardHeight(nextKeyboardHeight);
+      scrollToBottom(false);
+    });
+    const hideSubscription = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide", () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!keyboardVisible && layoutHeight > 0) {
+      baselineLayoutHeightRef.current = layoutHeight;
+    }
+  }, [keyboardVisible, layoutHeight]);
+
+  useEffect(() => {
     const hiddenComposerFloor = Math.max(insets.bottom, spacing.sm);
     const composerPaddingBottom = Platform.OS === "ios" ? Math.max(insets.bottom, spacing.xs) : spacing.xs;
     const visibleComposerMarginBottom = bottomInset > 0 ? bottomInset - composerPaddingBottom : hiddenComposerFloor;
+    const baseComposerMarginBottom = hidden ? hiddenComposerFloor : visibleComposerMarginBottom;
+    const resizedKeyboardInset =
+      Platform.OS === "android" && keyboardVisible
+        ? Math.max(0, baselineLayoutHeightRef.current - layoutHeight)
+        : 0;
+    const targetComposerLift =
+      Platform.OS === "android" && keyboardVisible
+        ? Math.max(0, keyboardHeight - resizedKeyboardInset - baseComposerMarginBottom)
+        : 0;
 
-    Animated.spring(composerMarginAnimation, {
-      damping: 22,
-      mass: 0.9,
-      stiffness: 240,
-      toValue: hidden ? hiddenComposerFloor : visibleComposerMarginBottom,
-      useNativeDriver: false
+    composerLiftAnimation.stopAnimation();
+    Animated.timing(composerLiftAnimation, {
+      duration: keyboardVisible ? 160 : 120,
+      easing: Easing.out(Easing.cubic),
+      toValue: targetComposerLift,
+      useNativeDriver: true
     }).start();
-  }, [bottomInset, composerMarginAnimation, hidden, insets.bottom]);
+  }, [bottomInset, composerLiftAnimation, hidden, insets.bottom, keyboardHeight, keyboardVisible, layoutHeight]);
 
   useEffect(() => {
     return () => {
@@ -503,16 +557,26 @@ export function AIChatScreen({
       : capabilityNote;
   const voiceButtonDisabled = sending || hasRetryableMessage;
   const sendButtonDisabled = sending || hasRetryableMessage || !draft.trim();
+  const hiddenComposerFloor = Math.max(insets.bottom, spacing.sm);
   const composerPaddingBottom = Platform.OS === "ios" ? Math.max(insets.bottom, spacing.xs) : spacing.xs;
+  const visibleComposerMarginBottom = bottomInset > 0 ? bottomInset - composerPaddingBottom : hiddenComposerFloor;
+  const composerMarginBottom = hidden ? hiddenComposerFloor : visibleComposerMarginBottom;
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safeArea}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
+      <KeyboardContainer
+        {...(Platform.OS === "ios"
+          ? {
+              behavior: "padding" as const,
+              keyboardVerticalOffset: 8
+            }
+          : {})}
         style={styles.flex}
       >
-        <View style={styles.flex}>
+        <View
+          onLayout={(event) => handleLayout(event.nativeEvent.layout.height)}
+          style={styles.flex}
+        >
           <FlatList
             contentContainerStyle={styles.listContent}
             data={messages}
@@ -602,8 +666,13 @@ export function AIChatScreen({
             style={[
               styles.composer,
               {
-                marginBottom: composerMarginAnimation,
-                paddingBottom: composerPaddingBottom
+                marginBottom: composerMarginBottom,
+                paddingBottom: composerPaddingBottom,
+                transform: [
+                  {
+                    translateY: Animated.multiply(composerLiftAnimation, -1)
+                  }
+                ]
               }
             ]}
           >
@@ -626,6 +695,7 @@ export function AIChatScreen({
               <TextInput
                 blurOnSubmit={false}
                 onChangeText={setDraft}
+                onFocus={handleComposerFocus}
                 onSubmitEditing={() => void handleSend("text")}
                 placeholder="描述今天的饮食、运动、睡眠或身体变化..."
                 placeholderTextColor={colors.textSoft}
@@ -670,7 +740,7 @@ export function AIChatScreen({
             </View>
           </Animated.View>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardContainer>
     </SafeAreaView>
   );
 }

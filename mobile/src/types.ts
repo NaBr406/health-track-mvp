@@ -1,3 +1,6 @@
+/**
+ * 认证、档案、仪表盘和聊天流程共用的领域类型定义。
+ */
 export type AuthSession = {
   token: string;
   userId: number;

@@ -4,6 +4,9 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+/**
+ * 认证接口使用的请求与响应 DTO 定义集合。
+ */
 public final class AuthDtos {
 
     private AuthDtos() {

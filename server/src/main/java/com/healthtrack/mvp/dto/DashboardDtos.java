@@ -4,6 +4,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * 仪表盘摘要、快照和反馈接口使用的 DTO 定义集合。
+ */
 public final class DashboardDtos {
 
     private DashboardDtos() {

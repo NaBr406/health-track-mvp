@@ -1,3 +1,6 @@
+/**
+ * 统一渲染头像预设、用户上传头像，以及姓名首字母兜底。
+ */
 import { Ionicons } from "@expo/vector-icons";
 import { Image, StyleSheet, Text, View } from "react-native";
 import { resolveAvatarPreset, getAvatarInitials } from "../lib/avatarPresets";

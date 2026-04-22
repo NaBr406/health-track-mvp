@@ -1,3 +1,12 @@
+/**
+ * 移动端数据网关。
+ *
+ * 这个文件把“请求服务端”和“回退到本地作用域数据”统一封在一起，
+ * 目的是让上层页面只关心业务数据，不需要反复判断：
+ * 1. 当前是游客模式还是登录模式。
+ * 2. 服务端是否可用。
+ * 3. 本地缓存是否需要拿来做补偿或恢复。
+ */
 import { loadToken } from "./auth";
 import { getDataScopeKey, loadDataScope } from "./dataScope";
 import { loadStoredHealthProfile, saveStoredHealthProfile } from "./healthProfileStorage";
@@ -93,6 +102,14 @@ function normalizeText(value?: string | null) {
 }
 
 async function request<T>(path: string, init: RequestInit = {}, fallback?: T | (() => T | Promise<T>)): Promise<T> {
+  /**
+   * 统一请求入口。
+   *
+   * 约定：
+   * 1. 自动附带 token。
+   * 2. 请求失败时，如果调用方提供了 fallback，则静默走兜底。
+   * 3. 204 响应也允许映射成 fallback，避免上层为“空响应”写重复判断。
+   */
   const resolveFallback = async () => {
     if (typeof fallback === "function") {
       return (fallback as () => T | Promise<T>)();
@@ -102,6 +119,7 @@ async function request<T>(path: string, init: RequestInit = {}, fallback?: T | (
   };
 
   try {
+    // 所有请求都经过这里，便于统一附带鉴权头并保持离线兜底行为一致。
     const token = await loadToken();
     const headers = new Headers(init.headers);
     headers.set("Content-Type", "application/json");
@@ -147,6 +165,8 @@ async function resolveIdentity(sessionOverride?: AuthSession | null): Promise<Da
 function mergeServerProfile(remote: ServerProfileResponse, stored: HealthProfile | null, session: AuthSession | null): HealthProfile {
   const now = new Date().toISOString();
 
+  // 服务端资料优先，但会尽量保留本地补充过而服务端还没有的字段，
+  // 这样能避免“本地先编辑、服务端稍后同步”时把信息覆盖掉。
   return {
     email: remote.email ?? stored?.email ?? session?.email ?? null,
     nickname: remote.nickname ?? stored?.nickname ?? session?.nickname ?? "",
@@ -244,6 +264,7 @@ function shouldRecoverServerProfile(remote: ServerProfileResponse, stored: Healt
 }
 
 async function persistScopedProfile(identity: DataIdentity, profile: HealthProfile) {
+  // 同时维护本地和兜底存储，避免临时断网或游客/账号切换时丢失最近编辑结果。
   await Promise.all([
     saveStoredHealthProfile(profile, identity.session),
     saveFallbackHealthProfile(identity.scopeKey, profile)
@@ -269,6 +290,8 @@ async function pushProfileToServer(profile: HealthProfile) {
 }
 
 async function recoverServerProfile(identity: DataIdentity, remote: ServerProfileResponse, stored: HealthProfile | null) {
+  // 当服务端档案明显过空，而本地缓存又存在更完整的数据时，
+  // 这里会主动把合并后的档案补推回服务端，减少用户感知到的数据丢失。
   const merged = mergeServerProfile(remote, stored, identity.session);
 
   if (!shouldRecoverServerProfile(remote, stored, merged)) {
@@ -287,6 +310,7 @@ async function recoverAccountGlucoseRecords(identity: DataIdentity) {
     return;
   }
 
+  // 同一账号作用域下只允许一个补偿任务并发执行，避免重复补写同一批血糖记录。
   const existingTask = glucoseRecoveryTasks.get(identity.scopeKey);
   if (existingTask) {
     await existingTask;
@@ -294,6 +318,7 @@ async function recoverAccountGlucoseRecords(identity: DataIdentity) {
   }
 
   const task = (async () => {
+    // 有些血糖点可能先记录在游客态，登录后这里会尽量补回到账号数据里。
     const recordedPoints = await getFallbackRecordedGlucosePoints(identity.scopeKey);
 
     if (recordedPoints.length === 0) {
@@ -363,6 +388,8 @@ export const api = {
   },
 
   async getHealthProfile(sessionOverride?: AuthSession | null) {
+    // 登录态优先从服务端拉取，但最终仍会落回本地缓存，
+    // 这样后续页面读取可以获得一份已经合并过、相对稳定的档案副本。
     const identity = await resolveIdentity(sessionOverride);
 
     if (!identity.session) {
@@ -405,6 +432,8 @@ export const api = {
   },
 
   async getDashboardSnapshot(date?: string) {
+    // 仪表盘读取前先尝试做一次账号血糖补偿，
+    // 这样用户在游客态录过的数据，登录后也更容易体现在服务端视图里。
     const identity = await resolveIdentity();
 
     if (!identity.session) {
@@ -414,7 +443,7 @@ export const api = {
     try {
       await recoverAccountGlucoseRecords(identity);
     } catch {
-      // Recovery is best-effort; failed recovery should not block current reads.
+      // 数据补偿属于尽力而为，失败时不应该阻塞当前页面读取。
     }
 
     return request<DashboardSnapshot>(`/api/dashboard/snapshot${buildQuery({ date })}`, {}, () =>

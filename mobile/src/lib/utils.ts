@@ -1,3 +1,6 @@
+/**
+ * 移动端全局复用的日期、格式化和解析工具。
+ */
 function pad(value: number) {
   return `${value}`.padStart(2, "0");
 }

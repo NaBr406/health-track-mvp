@@ -1,3 +1,6 @@
+/**
+ * 仪表盘和档案页面复用的临床风格基础组件。
+ */
 import type { ReactNode } from "react";
 import type { KeyboardTypeOptions, StyleProp, TextInputProps, ViewStyle } from "react-native";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
@@ -31,6 +34,7 @@ type InputFieldProps = {
   label: string;
   value: string;
   onChangeText: (value: string) => void;
+  onFocus?: TextInputProps["onFocus"];
   placeholder?: string;
   multiline?: boolean;
   keyboardType?: KeyboardTypeOptions;
@@ -90,6 +94,7 @@ export function InputField({
   label,
   value,
   onChangeText,
+  onFocus,
   placeholder,
   multiline,
   keyboardType,
@@ -104,6 +109,7 @@ export function InputField({
         keyboardType={keyboardType}
         multiline={multiline}
         onChangeText={onChangeText}
+        onFocus={onFocus}
         placeholder={placeholder}
         placeholderTextColor={colors.textSoft}
         secureTextEntry={secureTextEntry}

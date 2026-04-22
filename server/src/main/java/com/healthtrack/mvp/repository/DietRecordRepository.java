@@ -5,6 +5,9 @@ import java.time.LocalDate;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+/**
+ * 饮食记录的 JPA 访问层。
+ */
 public interface DietRecordRepository extends JpaRepository<DietRecord, Long> {
 
     List<DietRecord> findByUserIdAndRecordedOnBetweenOrderByRecordedOnDescCreatedAtDesc(

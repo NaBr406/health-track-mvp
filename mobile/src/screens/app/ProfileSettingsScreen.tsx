@@ -1,3 +1,6 @@
+/**
+ * 轻量设置页，集中放置账号操作和档案相关快捷入口。
+ */
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";

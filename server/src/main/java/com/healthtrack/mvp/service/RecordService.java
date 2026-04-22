@@ -22,6 +22,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+/**
+ * 负责饮食、运动、护理三类结构化记录的增查业务。
+ */
 @Service
 @RequiredArgsConstructor
 public class RecordService {

@@ -16,6 +16,9 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+/**
+ * 护理与监测记录实体，包含可选的血糖读数。
+ */
 @Getter
 @Setter
 @NoArgsConstructor

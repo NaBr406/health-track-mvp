@@ -16,6 +16,9 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+/**
+ * 运动记录实体，既可以手动录入，也可以从对话里推断生成。
+ */
 @Getter
 @Setter
 @NoArgsConstructor

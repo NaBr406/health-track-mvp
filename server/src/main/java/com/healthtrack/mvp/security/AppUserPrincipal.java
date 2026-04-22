@@ -8,6 +8,9 @@ import org.springframework.security.core.userdetails.UserDetails;
 
 @Getter
 @RequiredArgsConstructor
+/**
+ * 把系统内的用户对象适配成 Spring Security 使用的 {@link UserDetails}。
+ */
 public class AppUserPrincipal implements UserDetails {
 
     private final Long id;

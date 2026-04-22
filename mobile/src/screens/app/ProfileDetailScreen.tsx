@@ -1,3 +1,6 @@
+/**
+ * 档案详情页，把已保存的健康信息整理成多个只读分区展示。
+ */
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";

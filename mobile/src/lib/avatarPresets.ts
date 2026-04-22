@@ -1,3 +1,6 @@
+/**
+ * 内置头像预设及其辅助查询方法，供引导页和档案页复用。
+ */
 import { Ionicons } from "@expo/vector-icons";
 
 export type AvatarPreset = {

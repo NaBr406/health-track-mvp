@@ -20,6 +20,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 
+/**
+ * 调用 Dify 的记录抽取工作流，把聊天文本整理成结构化健康记录。
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor

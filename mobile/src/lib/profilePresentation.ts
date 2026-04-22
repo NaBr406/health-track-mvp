@@ -1,3 +1,6 @@
+/**
+ * 仅负责展示层衍生信息的工具，比如完善度、状态文案和风险摘要。
+ */
 import type { AuthSession, HealthProfile } from "../types";
 
 export type StatusTone = "success" | "warning" | "neutral";

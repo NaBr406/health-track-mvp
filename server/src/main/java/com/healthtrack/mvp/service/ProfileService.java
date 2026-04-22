@@ -13,6 +13,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
+/**
+ * 负责健康档案的读取、初始化和更新。
+ */
 @Service
 @RequiredArgsConstructor
 public class ProfileService {

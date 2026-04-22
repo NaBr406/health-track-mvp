@@ -18,6 +18,13 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 
+/**
+ * Dify 每日建议客户端。
+ *
+ * 主要做两件事：
+ * 1. 把应用内部的健康上下文重组为 Dify 工作流输入。
+ * 2. 从不稳定的工作流响应结构里尽量稳妥地提取出最终建议文本。
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -63,6 +70,11 @@ public class DifyClient {
     @Value("${app.dify.input-stringify:false}")
     private boolean inputStringify;
 
+    /**
+     * 调用 Dify 工作流生成每日建议。
+     *
+     * 如果必要配置缺失或调用失败，返回 empty，由上层决定是否走 mock 兜底。
+     */
     public Optional<DifyAdviceResult> generateDailyAdvice(Long userId, LocalDate adviceDate, Map<String, Object> context) {
         if (!StringUtils.hasText(baseUrl) || !StringUtils.hasText(apiKey)) {
             return Optional.empty();
@@ -99,6 +111,11 @@ public class DifyClient {
         }
     }
 
+    /**
+     * 从 Dify 原始响应里提取建议文本。
+     *
+     * 会先按一组已知路径尝试命中，再递归扫描常见字段名，尽量兼容工作流输出差异。
+     */
     private String extractAdviceText(JsonNode root) {
         if (root == null || root.isNull()) {
             return null;
@@ -119,6 +136,12 @@ public class DifyClient {
         return extractAdviceTextFromNode(root, 0);
     }
 
+    /**
+     * 构建最终传给 Dify 的 inputs。
+     *
+     * 如果配置了 inputVariable，会把健康上下文包到该变量名下；
+     * 否则直接把原始上下文作为 inputs 发送。
+     */
     private Map<String, Object> buildInputs(Map<String, Object> context) {
         if (!StringUtils.hasText(inputVariable)) {
             return context;

@@ -5,6 +5,9 @@ import java.time.LocalDate;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+/**
+ * 运动记录的 JPA 访问层。
+ */
 public interface ExerciseRecordRepository extends JpaRepository<ExerciseRecord, Long> {
 
     List<ExerciseRecord> findByUserIdAndRecordedOnBetweenOrderByRecordedOnDescCreatedAtDesc(

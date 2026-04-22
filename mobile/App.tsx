@@ -1,3 +1,11 @@
+/**
+ * 移动端应用入口。
+ *
+ * 这里集中处理三件事：
+ * 1. 启动时恢复本地登录态、健康档案和引导完成状态。
+ * 2. 根据当前状态决定进入主界面、首次引导还是编辑引导。
+ * 3. 作为主导航壳层，把登录弹层和主业务导航组织在一起。
+ */
 import "react-native-gesture-handler";
 import { useEffect, useRef, useState } from "react";
 import { DefaultTheme, NavigationContainer } from "@react-navigation/native";
@@ -39,6 +47,8 @@ const navigationTheme = {
 };
 
 function hasCompletedHealthProfile(profile: HealthProfile | null) {
+  // 这里只检查最核心的关键字段，用来决定是否放行主流程，
+  // 而不是要求所有可选资料都填写完。
   return Boolean(
     profile?.nickname.trim() &&
       profile.conditionLabel.trim() &&
@@ -59,6 +69,8 @@ export default function App() {
 
   useEffect(() => {
     async function bootstrap() {
+      // 先用本地缓存完成启动，再交给 API 层与服务端状态做一次对齐。
+      // 这样既能保证首屏打开足够快，也能在后台恢复成账号的最新状态。
       const storedSession = await loadStoredSession();
       const storedProfile = storedSession ? await loadStoredHealthProfile(storedSession) : null;
       const resolvedProfile = storedSession ? await api.getHealthProfile(storedSession) : storedProfile;
@@ -74,6 +86,8 @@ export default function App() {
   }, []);
 
   async function handleSignedIn(nextSession: AuthSession) {
+    // 登录完成后立刻刷新账号作用域下的档案和路由状态。
+    // 这里会把游客态和账号态的数据空间切开，后续页面刷新也依赖这个切换结果。
     await saveStoredSession(nextSession);
     const accountProfile = await api.getHealthProfile(nextSession);
     const onboardingGatePassed = await loadOnboardingGatePassed(nextSession);
@@ -114,6 +128,8 @@ export default function App() {
   }
 
   async function handleOnboardingComplete(profile: HealthProfile) {
+    // “首次完成”和“已有资料再次编辑”共用同一个提交口，
+    // 但结束后的路由行为不一样：首次完成回主界面，编辑则返回上一页。
     const editingExisting = hasCompletedHealthProfile(healthProfile);
 
     if (session) {
@@ -143,6 +159,7 @@ export default function App() {
   }
 
   async function handleSkipOnboarding() {
+    // 跳过引导只放开路由门禁，不会伪造一份完整档案。
     if (session) {
       await saveOnboardingGatePassed(session);
     }

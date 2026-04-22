@@ -1,11 +1,15 @@
+/**
+ * 多步骤引导页，用于完善或编辑健康档案。
+ */
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { InputField, OutlineButton } from "../components/clinical";
 import { ProfileAvatar } from "../components/ProfileAvatar";
 import { avatarPresets } from "../lib/avatarPresets";
 import { api } from "../lib/api";
+import { useScrollFocusedInputIntoView } from "../lib/useScrollFocusedInputIntoView";
 import { safeNumber, safeText } from "../lib/utils";
 import { colors, fonts, layout, radii, shadows, spacing, typography } from "../theme/tokens";
 import type { HealthProfile } from "../types";
@@ -80,6 +84,9 @@ export function OnboardingWizardScreen({
   onComplete,
   onSkip
 }: OnboardingWizardScreenProps) {
+  const KeyboardContainer = Platform.OS === "ios" ? KeyboardAvoidingView : View;
+  const scrollRef = useRef<ScrollView>(null);
+  const { onFieldFocus, onScroll, scrollEventThrottle } = useScrollFocusedInputIntoView(scrollRef);
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<WizardForm>(() => createForm(initialProfile));
   const [saving, setSaving] = useState(false);
@@ -193,8 +200,24 @@ export function OnboardingWizardScreen({
 
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.heroCard}>
+      <KeyboardContainer
+        {...(Platform.OS === "ios"
+          ? {
+              behavior: "padding" as const
+            }
+          : {})}
+        style={styles.safeArea}
+      >
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          onScroll={onScroll}
+          ref={scrollRef}
+          scrollEventThrottle={scrollEventThrottle}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
             <View style={styles.heroCopy}>
               <Text style={styles.heroEyebrow}>{mode === "initial" ? "健康档案" : "资料编辑"}</Text>
@@ -223,7 +246,7 @@ export function OnboardingWizardScreen({
           </View>
         </View>
 
-        <View style={styles.stepCard}>
+          <View style={styles.stepCard}>
           <View style={styles.stepTopRow}>
             <View>
               <Text style={styles.stepLabel}>步骤 {step + 1}</Text>
@@ -306,6 +329,7 @@ export function OnboardingWizardScreen({
 
               <InputField
                 label="昵称"
+                onFocus={onFieldFocus}
                 placeholder="例如：林岚"
                 value={form.nickname}
                 onChangeText={(value) => setForm((current) => ({ ...current, nickname: value }))}
@@ -317,24 +341,28 @@ export function OnboardingWizardScreen({
             <View style={styles.formBlock}>
               <InputField
                 label="健康状态"
+                onFocus={onFieldFocus}
                 placeholder="例如：2 型糖尿病"
                 value={form.conditionLabel}
                 onChangeText={(value) => setForm((current) => ({ ...current, conditionLabel: value }))}
               />
               <InputField
                 label="当前目标"
+                onFocus={onFieldFocus}
                 placeholder="例如：降低餐后波动并稳定体重"
                 value={form.primaryTarget}
                 onChangeText={(value) => setForm((current) => ({ ...current, primaryTarget: value }))}
               />
               <InputField
                 label="空腹血糖基线"
+                onFocus={onFieldFocus}
                 placeholder="例如：7.2 mmol/L"
                 value={form.fastingGlucoseBaseline}
                 onChangeText={(value) => setForm((current) => ({ ...current, fastingGlucoseBaseline: value }))}
               />
               <InputField
                 label="血压基线"
+                onFocus={onFieldFocus}
                 placeholder="例如：128/82 mmHg"
                 value={form.bloodPressureBaseline}
                 onChangeText={(value) => setForm((current) => ({ ...current, bloodPressureBaseline: value }))}
@@ -347,12 +375,14 @@ export function OnboardingWizardScreen({
               <InputField
                 label="当前用药"
                 multiline
+                onFocus={onFieldFocus}
                 placeholder="例如：二甲双胍 0.5g bid"
                 value={form.medicationPlan}
                 onChangeText={(value) => setForm((current) => ({ ...current, medicationPlan: value }))}
               />
               <InputField
                 label="照护重点"
+                onFocus={onFieldFocus}
                 placeholder="例如：晚饭后步行与睡前恢复流程"
                 value={form.careFocus}
                 onChangeText={(value) => setForm((current) => ({ ...current, careFocus: value }))}
@@ -360,6 +390,7 @@ export function OnboardingWizardScreen({
               <InputField
                 label="备注摘要"
                 multiline
+                onFocus={onFieldFocus}
                 placeholder="例如：对高 GI 主食敏感，午后久坐时波动更明显"
                 value={form.notes}
                 onChangeText={(value) => setForm((current) => ({ ...current, notes: value }))}
@@ -406,8 +437,9 @@ export function OnboardingWizardScreen({
               />
             )}
           </View>
-        </View>
-      </ScrollView>
+          </View>
+        </ScrollView>
+      </KeyboardContainer>
     </SafeAreaView>
   );
 }

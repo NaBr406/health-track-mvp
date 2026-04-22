@@ -1,3 +1,6 @@
+/**
+ * 本地保存和清理登录会话的小型工具。
+ */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { AuthSession } from "../types";
 

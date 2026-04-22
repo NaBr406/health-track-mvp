@@ -3,6 +3,9 @@ package com.healthtrack.mvp.dto;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 健康档案读写接口使用的 DTO 定义集合。
+ */
 public final class ProfileDtos {
 
     private ProfileDtos() {

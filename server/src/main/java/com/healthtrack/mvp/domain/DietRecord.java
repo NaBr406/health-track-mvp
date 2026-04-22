@@ -17,6 +17,9 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+/**
+ * 饮食记录实体，既可以手动录入，也可以从对话里抽取。
+ */
 @Getter
 @Setter
 @NoArgsConstructor

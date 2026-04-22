@@ -5,6 +5,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * 对话线程和聊天消息接口使用的 DTO 定义集合。
+ */
 public final class InteractionDtos {
 
     private InteractionDtos() {

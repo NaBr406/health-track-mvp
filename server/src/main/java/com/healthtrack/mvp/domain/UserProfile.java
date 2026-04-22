@@ -18,6 +18,9 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+/**
+ * 绑定在用户账号上的扩展健康档案，供仪表盘和建议生成流程使用。
+ */
 @Getter
 @Setter
 @NoArgsConstructor

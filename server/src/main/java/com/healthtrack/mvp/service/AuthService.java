@@ -16,6 +16,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
+/**
+ * 处理注册、登录以及 JWT 签发相关的认证业务。
+ */
 @Service
 @RequiredArgsConstructor
 public class AuthService {

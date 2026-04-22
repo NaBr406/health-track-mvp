@@ -15,6 +15,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 对话线程获取和消息提交相关的 REST 接口。
+ */
 @RestController
 @RequestMapping("/api/interaction")
 @RequiredArgsConstructor

@@ -1,3 +1,6 @@
+/**
+ * 按作用域隔离的离线存储，用来支撑游客模式和后端不可用时的本地兜底。
+ */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type {
   AdjustmentFeedback,
@@ -72,6 +75,7 @@ function normalizeStore(value: unknown): FallbackStore {
     return createEmptyStore();
   }
 
+  // 本地兜底数据按不可信输入处理，避免旧版本结构影响新页面渲染。
   const parsed = value as Partial<FallbackStore>;
   const historyStore = Array.isArray(parsed.historyStore) ? parsed.historyStore.map(clonePoint) : [];
   const messagesByDate = Object.fromEntries(
@@ -289,6 +293,7 @@ function buildGlucoseForecast(point: MonitoringHistoryPoint): GlucoseForecastPoi
 }
 
 function buildSnapshot(store: FallbackStore, date = getTodayString()): DashboardSnapshot {
+  // 本地仪表盘和聊天、反馈都从同一份离线状态推导，保证体验一致。
   const point = getPointForRead(store, date);
   const history = historyWindow(store, date);
   const feedback = store.feedbackByDate[date] ?? null;
@@ -355,6 +360,7 @@ function extractNumber(source: string, expression: RegExp) {
 function applyMessageToPoint(point: MonitoringHistoryPoint, message: string) {
   const changes: string[] = [];
   const normalized = message.toLowerCase();
+  // 用轻量文本提取维持游客模式可用性，即使没有服务端解析也能形成基础数据。
 
   const steps = extractNumber(message, /(\d+)\s*(?:步|steps?)/i);
   if (typeof steps === "number") {

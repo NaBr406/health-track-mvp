@@ -1,3 +1,6 @@
+/**
+ * 解析当前读写应该落到游客数据空间还是登录账号空间。
+ */
 import type { AuthSession } from "../types";
 import { loadStoredSession } from "./auth";
 

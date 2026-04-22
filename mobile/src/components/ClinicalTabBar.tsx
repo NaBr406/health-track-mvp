@@ -1,3 +1,6 @@
+/**
+ * 自定义底部标签栏，支持沉浸式页面里的显隐联动。
+ */
 import { Ionicons } from "@expo/vector-icons";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { useEffect, useRef, useState } from "react";
@@ -13,6 +16,7 @@ export function ClinicalTabBar({ state, descriptors, navigation }: BottomTabBarP
   const nestedRouteName = getDeepestRouteName(activeRoute.state);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const animation = useRef(new Animated.Value(0)).current;
+  const bottomOffset = getTabBarBottomOffset(insets.bottom);
 
   const shouldHide = hidden || keyboardVisible;
 
@@ -41,52 +45,50 @@ export function ClinicalTabBar({ state, descriptors, navigation }: BottomTabBarP
   }
 
   return (
-    <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-      <Animated.View
-        pointerEvents={shouldHide ? "none" : "auto"}
-        style={[
-          styles.wrap,
-          {
-            bottom: getTabBarBottomOffset(insets.bottom),
-            opacity: animation.interpolate({
-              inputRange: [0, 1],
-              outputRange: [1, 0]
-            }),
-            transform: [
-              {
-                translateY: animation.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0, layout.tabBarHeight + spacing.xl]
-                })
-              }
-            ]
-          }
-        ]}
-      >
-        <View style={styles.bar}>
-          {state.routes.map((route, index) => {
-            const isFocused = state.index === index;
-            const label =
-              descriptors[route.key].options.tabBarLabel ??
-              descriptors[route.key].options.title ??
-              route.name;
-            const iconName = getTabIcon(route.name, isFocused);
+    <Animated.View
+      pointerEvents={shouldHide ? "none" : "auto"}
+      style={[
+        styles.portal,
+        {
+          paddingBottom: bottomOffset,
+          opacity: animation.interpolate({
+            inputRange: [0, 1],
+            outputRange: [1, 0]
+          }),
+          transform: [
+            {
+              translateY: animation.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, layout.tabBarHeight + bottomOffset + spacing.xl]
+              })
+            }
+          ]
+        }
+      ]}
+    >
+      <View style={styles.bar}>
+        {state.routes.map((route, index) => {
+          const isFocused = state.index === index;
+          const label =
+            descriptors[route.key].options.tabBarLabel ??
+            descriptors[route.key].options.title ??
+            route.name;
+          const iconName = getTabIcon(route.name, isFocused);
 
-            return (
-              <Pressable
-                accessibilityRole="button"
-                key={route.key}
-                onPress={() => navigation.navigate(route.name)}
-                style={({ pressed }) => [styles.item, isFocused ? styles.itemActive : null, pressed ? styles.itemPressed : null]}
-              >
-                <Ionicons color={isFocused ? colors.primary : colors.textSoft} name={iconName} size={18} />
-                <Text style={[styles.label, isFocused ? styles.labelActive : null]}>{String(label)}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </Animated.View>
-    </View>
+          return (
+            <Pressable
+              accessibilityRole="button"
+              key={route.key}
+              onPress={() => navigation.navigate(route.name)}
+              style={({ pressed }) => [styles.item, isFocused ? styles.itemActive : null, pressed ? styles.itemPressed : null]}
+            >
+              <Ionicons color={isFocused ? colors.primary : colors.textSoft} name={iconName} size={18} />
+              <Text style={[styles.label, isFocused ? styles.labelActive : null]}>{String(label)}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </Animated.View>
   );
 }
 
@@ -121,8 +123,9 @@ function getTabIcon(routeName: string, isFocused: boolean) {
 }
 
 const styles = StyleSheet.create({
-  wrap: {
+  portal: {
     position: "absolute",
+    bottom: 0,
     left: layout.pageHorizontal,
     right: layout.pageHorizontal
   },

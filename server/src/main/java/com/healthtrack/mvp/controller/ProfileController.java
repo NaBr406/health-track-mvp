@@ -11,6 +11,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 用户健康档案读取与更新相关的 REST 接口。
+ */
 @RestController
 @RequestMapping("/api/profile")
 @RequiredArgsConstructor

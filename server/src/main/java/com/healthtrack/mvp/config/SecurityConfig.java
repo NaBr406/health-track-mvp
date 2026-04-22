@@ -18,6 +18,14 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+/**
+ * Spring Security 核心配置。
+ *
+ * 当前项目采用无状态 JWT 模式，因此这里会统一处理：
+ * 1. 哪些接口匿名放行。
+ * 2. JWT 过滤器的接入顺序。
+ * 3. 跨域策略和密码编码器。
+ */
 @Configuration
 @EnableMethodSecurity
 @RequiredArgsConstructor
@@ -25,6 +33,11 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
+    /**
+     * 定义主安全过滤链。
+     *
+     * 认证相关接口、Swagger 文档和预检请求直接放行，其余请求默认都要求认证。
+     */
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
@@ -50,6 +63,11 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
+    /**
+     * 定义全局跨域配置。
+     *
+     * MVP 阶段放得相对宽松，目的是降低移动端、本地调试和文档联调的接入摩擦。
+     */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();

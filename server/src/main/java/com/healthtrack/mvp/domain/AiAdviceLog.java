@@ -16,6 +16,9 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+/**
+ * 保存 AI 建议及其请求、响应载荷，便于追踪和回溯。
+ */
 @Getter
 @Setter
 @NoArgsConstructor

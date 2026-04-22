@@ -1,3 +1,11 @@
+/**
+ * 今日仪表盘页面。
+ *
+ * 页面职责分成三层：
+ * 1. 拉取“今日快照”并处理刷新、游客态提示等页面状态。
+ * 2. 把原始快照转换成更适合 UI 渲染的卡片元数据。
+ * 3. 用一套自绘血糖图表，把历史值和 8 小时预测统一展示出来。
+ */
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
@@ -94,16 +102,20 @@ export function DashboardScreen({
   }, [refreshToken, session?.userId]);
 
   useEffect(() => {
+    // 定时刷新当前时间，让时效性文案和预测标记在不重复拉接口的情况下保持新鲜。
     const timer = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(timer);
   }, []);
 
   async function loadSnapshot(initial = false) {
+    // 首次进入和下拉刷新共用一个读取入口，
+    // 这样无论数据来自服务端还是本地兜底，页面状态变化都保持一致。
     if (!initial) {
       setRefreshing(true);
     }
 
     try {
+      // 具体读服务端还是本地兜底数据，由 API 层统一决定。
       setSnapshot(await api.getDashboardSnapshot(getTodayString()));
     } finally {
       setRefreshing(false);
@@ -462,6 +474,8 @@ function buildAdviceCard(snapshot: DashboardSnapshot | null) {
 }
 
 function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: HealthProfile | null, now: Date): MetricCardMeta[] {
+  // 这里把后端/本地快照转成纯 UI 模型，
+  // 避免 JSX 内部到处散落“取值 + 容错 + 格式化”逻辑。
   const calorieTarget = resolveCalorieTarget(healthProfile);
   const calorieValue = getMetricNumber(snapshot, "calories");
   const exerciseValue = getMetricNumber(snapshot, "exercise");
@@ -508,6 +522,8 @@ function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: Hea
 }
 
 function buildGlucoseChart(snapshot: DashboardSnapshot | null, now: Date): GlucoseChartMeta {
+  // 血糖卡片优先展示预测；没有预测时再退回历史记录；
+  // 两者都没有时才进入空态。
   const forecast = getGlucoseForecast(snapshot);
   if (forecast.length > 0) {
     return buildForecastChart(snapshot, forecast, now);
@@ -564,6 +580,8 @@ function getGlucoseForecast(snapshot: DashboardSnapshot | null) {
 }
 
 function buildForecastChart(snapshot: DashboardSnapshot | null, forecast: GlucoseForecastPoint[], now: Date): GlucoseChartSeriesMeta {
+  // 预测图除了展示未来点位，还会把“当前时刻”插回曲线里，
+  // 让用户更容易理解自己处在这条 8 小时曲线的哪个位置。
   const sorted = [...forecast].sort((left, right) => left.hourOffset - right.hourOffset);
   const forecastStart = resolveForecastStartTime(snapshot, now);
   const lastHour = Math.max(...sorted.map((point) => point.hourOffset), 0);
@@ -786,6 +804,8 @@ function formatClockLabel(value: Date) {
 }
 
 function insertCurrentGlucosePoint(points: GlucoseChartPoint[], currentX: number, currentLabel: string) {
+  // 当前时刻并不一定正好落在预测采样点上，
+  // 所以这里会把它吸附到最近的点位或插入到两点之间，保证图上有明确当前位置。
   if (points.length === 0) {
     return {
       points,

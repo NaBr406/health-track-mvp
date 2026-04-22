@@ -4,6 +4,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestClient;
 
+/**
+ * 提供对外集成统一复用的 {@link org.springframework.web.client.RestClient}。
+ */
 @Configuration
 public class RestClientConfig {
 

@@ -1,3 +1,6 @@
+/**
+ * 用来初始化游客模式和本地兜底体验的静态种子数据。
+ */
 import type { AuthSession, HealthProfile, MonitoringHistoryPoint } from "../types";
 import { getDateOffsetString, getTodayString } from "./utils";
 

@@ -13,6 +13,9 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+/**
+ * 账号核心实体，用于认证以及关联用户拥有的健康数据。
+ */
 @Getter
 @Setter
 @NoArgsConstructor

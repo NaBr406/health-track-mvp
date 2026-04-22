@@ -22,6 +22,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 在项目首次启动时灌入演示账号和基础记录，方便 MVP 直接体验。
+ */
 @Component
 @RequiredArgsConstructor
 public class SeedDataInitializer implements ApplicationRunner {

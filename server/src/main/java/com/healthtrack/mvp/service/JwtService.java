@@ -16,6 +16,9 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+/**
+ * 统一负责 JWT 的签发、解析和有效性校验。
+ */
 @Service
 public class JwtService {
 

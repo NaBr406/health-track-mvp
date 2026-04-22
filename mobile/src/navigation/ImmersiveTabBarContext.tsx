@@ -1,3 +1,6 @@
+/**
+ * 统一管理沉浸式滚动页面里的底部栏占位和显隐行为。
+ */
 import { useFocusEffect } from "@react-navigation/native";
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type PropsWithChildren } from "react";
 import type { NativeScrollEvent, NativeSyntheticEvent } from "react-native";

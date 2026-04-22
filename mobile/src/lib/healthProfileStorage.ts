@@ -1,3 +1,6 @@
+/**
+ * 按账号作用域把健康档案持久化到本地存储。
+ */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { AuthSession, HealthProfile } from "../types";
 import { getDataScopeKey } from "./dataScope";

@@ -1,3 +1,6 @@
+/**
+ * 记录当前账号是否已经完成或主动跳过引导流程。
+ */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { AuthSession } from "../types";
 

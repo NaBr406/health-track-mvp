@@ -40,6 +40,14 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
+/**
+ * 对话交互服务。
+ *
+ * 这里把“聊天”真正接成了业务入口：
+ * 1. 维护按用户和日期隔离的线程视图。
+ * 2. 解析消息中的结构化健康信息。
+ * 3. 写入正式记录，并同步刷新建议与仪表盘快照。
+ */
 @Service
 @RequiredArgsConstructor
 public class InteractionService {
@@ -61,12 +69,22 @@ public class InteractionService {
     private final Map<String, DayState> dayStateStore = new ConcurrentHashMap<>();
     private final Map<String, String> feedbackStore = new ConcurrentHashMap<>();
 
+    /**
+     * 获取指定日期的对话线程。
+     *
+     * 如果线程不存在，会按当天快照自动种出一组欢迎消息和初始建议。
+     */
     public ChatThreadResponse getThread(Long userId, LocalDate focusDate) {
         LocalDate date = resolveDate(focusDate);
         CopyOnWriteArrayList<ChatMessageResponse> thread = ensureThread(userId, date);
         return new ChatThreadResponse(date, List.copyOf(thread), DATA_SOURCE);
     }
 
+    /**
+     * 处理一条新的聊天消息。
+     *
+     * 这个入口会串起“入线程 -> 解析 -> 落库 -> 刷新建议 -> 回写助手回复”整条链路。
+     */
     @Transactional
     public InteractionMessageResponse sendMessage(Long userId, InteractionMessageRequest request) {
         LocalDate focusDate = resolveDate(request.focusDate());
@@ -108,6 +126,9 @@ public class InteractionService {
         return new InteractionMessageResponse(focusDate, List.copyOf(thread), snapshot, DATA_SOURCE);
     }
 
+    /**
+     * 记录用户对当前调整建议的反馈，并立刻返回最新快照。
+     */
     public DashboardSnapshotResponse submitAdjustmentFeedback(Long userId, AdjustmentFeedbackRequest request) {
         LocalDate focusDate = resolveDate(request.focusDate());
         String feedback = normalizeFeedback(request.feedback());
@@ -126,8 +147,15 @@ public class InteractionService {
         return getDashboardSnapshot(userId, focusDate);
     }
 
+    /**
+     * 生成当前日期的聊天版仪表盘快照。
+     *
+     * 与纯摘要服务不同，这里还会叠加当天会话里尚未完全沉淀到结构化表的数据状态，
+     * 比如临时步数、睡眠和预测结果。
+     */
     public DashboardSnapshotResponse getDashboardSnapshot(Long userId, LocalDate focusDate) {
         LocalDate date = resolveDate(focusDate);
+        // 仪表盘快照会混合持久化数据和当天对话里推导出的临时状态。
         DashboardSummaryResponse summary = dashboardService.getSummary(userId, date);
         DailyAdviceResponse advice = adviceService.getDailyAdvice(userId, date);
         UserProfile profile = userProfileRepository.findByUserId(userId).orElse(null);
@@ -229,6 +257,11 @@ public class InteractionService {
         );
     }
 
+    /**
+     * 把解析结果落成正式记录，并同步更新当天的临时推导状态。
+     *
+     * 返回值是本次消息实际造成的“变化摘要”，供助手回复直接复述给用户。
+     */
     private List<String> persistInteraction(Long userId, LocalDate focusDate, String message, String inputMode, ParsedInteraction parsed) {
         User user = findUser(userId);
         DayState state = dayStateStore.computeIfAbsent(dayKey(userId, focusDate), ignored -> new DayState());
@@ -236,6 +269,7 @@ public class InteractionService {
         boolean persisted = false;
 
         if (parsed.calories() != null) {
+            // 能直接结构化的内容优先落成正式记录，后续摘要和建议都会复用这些数据。
             DietRecord record = new DietRecord();
             record.setUser(user);
             record.setRecordedOn(focusDate);
@@ -343,6 +377,11 @@ public class InteractionService {
         return changes;
     }
 
+    /**
+     * 解析聊天文本。
+     *
+     * 优先走 Dify 抽取器；只有在没有抽到结构化结果时，才退回本地规则解析。
+     */
     private ParsedInteraction parseMessage(Long userId, LocalDate focusDate, String message) {
         UserProfile profile = userProfileRepository.findByUserId(userId).orElse(null);
         DayState state = dayStateStore.computeIfAbsent(dayKey(userId, focusDate), ignored -> new DayState());
@@ -354,6 +393,11 @@ public class InteractionService {
                 .orElseGet(() -> parseMessageLocally(message));
     }
 
+    /**
+     * 构造发给 Dify 抽取器的上下文。
+     *
+     * 这里会把当前已知血糖、预测状态和来源标签一起带上，方便模型做连续推断。
+     */
     private DifyRecordExtractorClient.ExtractorContext buildExtractorContext(Long userId, LocalDate focusDate, DayState state) {
         CurrentGlucoseContext currentGlucoseContext = resolveCurrentGlucoseContext(userId, focusDate, state);
         return new DifyRecordExtractorClient.ExtractorContext(

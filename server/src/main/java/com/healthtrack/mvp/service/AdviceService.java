@@ -27,6 +27,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+/**
+ * 每日建议服务。
+ *
+ * 主要职责：
+ * 1. 汇总指定日期的用户档案、饮食、运动、护理记录。
+ * 2. 组织成 Dify 工作流能够消费的上下文载荷。
+ * 3. 在生成建议后把请求、响应和最终文本一并写入日志表，便于回溯。
+ */
 @Service
 @RequiredArgsConstructor
 public class AdviceService {
@@ -40,6 +48,12 @@ public class AdviceService {
     private final DifyClient difyClient;
     private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
+    /**
+     * 读取某天的建议。
+     *
+     * 如果当天已经生成过建议，则直接复用最新一条日志；
+     * 否则现场生成并落库。
+     */
     @Transactional
     public DailyAdviceResponse getDailyAdvice(Long userId, LocalDate targetDate) {
         LocalDate adviceDate = targetDate != null ? targetDate : LocalDate.now();
@@ -49,12 +63,23 @@ public class AdviceService {
                 .orElseGet(() -> generateAndSaveAdvice(userId, adviceDate));
     }
 
+    /**
+     * 强制刷新某天的建议。
+     *
+     * 典型场景是聊天新写入了饮食、运动或监测数据，需要基于最新归档重新生成建议。
+     */
     @Transactional
     public DailyAdviceResponse refreshDailyAdvice(Long userId, LocalDate targetDate) {
         LocalDate adviceDate = targetDate != null ? targetDate : LocalDate.now();
         return generateAndSaveAdvice(userId, adviceDate);
     }
 
+    /**
+     * 生成并持久化一条新的每日建议日志。
+     *
+     * 这里既负责调用 Dify，也负责在 Dify 不可用时降级到本地 mock 建议，
+     * 从而保证前端始终能拿到一份可展示结果。
+     */
     private DailyAdviceResponse generateAndSaveAdvice(Long userId, LocalDate adviceDate) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
@@ -69,6 +94,7 @@ public class AdviceService {
         Map<String, Object> payload = buildPayload(user, profile, adviceDate, dietRecords, exerciseRecords, careRecords);
         DifyClient.DifyAdviceResult result = difyClient.generateDailyAdvice(userId, adviceDate, payload)
                 .orElseGet(() -> new DifyClient.DifyAdviceResult(
+                        // Dify 未配置或调用失败时，仍然返回一份可展示的兜底建议。
                         buildMockAdvice(profile, dietRecords, exerciseRecords, careRecords),
                         "mock",
                         "{\"message\":\"TODO: configure Dify credentials to enable real workflow execution\"}"
@@ -85,6 +111,12 @@ public class AdviceService {
         return toResponse(aiAdviceLogRepository.save(log));
     }
 
+    /**
+     * 组装 Dify 工作流输入载荷。
+     *
+     * 载荷会同时包含：
+     * 用户身份、健康档案、按类型拆分的结构化记录，以及当日摘要统计。
+     */
     private Map<String, Object> buildPayload(
             User user,
             UserProfile profile,
