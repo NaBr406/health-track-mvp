@@ -1,16 +1,26 @@
 package com.healthtrack.mobile.steps
 
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.concurrent.TimeUnit
@@ -19,10 +29,14 @@ class DeviceStepCounterModule(
   reactContext: ReactApplicationContext
 ) : ReactContextBaseJavaModule(reactContext) {
   private val moduleScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+  private val mainHandler = Handler(Looper.getMainLooper())
+  @Volatile private var liveStepListener: SensorEventListener? = null
+  @Volatile private var jsListenerCount = 0
 
   override fun getName(): String = MODULE_NAME
 
   override fun invalidate() {
+    stopLiveUpdatesInternal()
     super.invalidate()
     moduleScope.cancel()
   }
@@ -115,43 +129,209 @@ class DeviceStepCounterModule(
     }
   }
 
+  @ReactMethod
+  fun startLiveUpdates(promise: Promise) {
+    moduleScope.launch {
+      try {
+        ensureLiveUpdatesStarted()
+        promise.resolve(true)
+      } catch (error: Exception) {
+        promise.reject("E_DEVICE_STEP_COUNTER_LIVE_START", error.message, error)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun stopLiveUpdates(promise: Promise) {
+    stopLiveUpdatesInternal()
+    promise.resolve(true)
+  }
+
+  @ReactMethod
+  fun addListener(eventName: String) {
+    jsListenerCount += 1
+  }
+
+  @ReactMethod
+  fun removeListeners(count: Double) {
+    jsListenerCount = (jsListenerCount - count.toInt()).coerceAtLeast(0)
+    if (jsListenerCount == 0) {
+      stopLiveUpdatesInternal()
+    }
+  }
+
   private fun buildDailyRecords(
     store: DeviceStepSnapshotStore,
     days: Int,
     endDate: LocalDate
   ): List<DeviceStepDailyRecord> {
-    val zoneId = ZoneId.systemDefault()
     val startDate = endDate.minusDays((days - 1).toLong())
 
     return List(days) { index ->
-      val date = startDate.plusDays(index.toLong())
-      val dayStartEpochMs = date.atStartOfDay(zoneId).toInstant().toEpochMilli()
-      val dayEndEpochMs = date.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
-      val baseline = store.getLatestSnapshotBefore(dayStartEpochMs)
-      val daySnapshots = store.getSnapshotsBetween(dayStartEpochMs, dayEndEpochMs)
-      val sequence = buildList {
-        if (baseline != null) {
-          add(baseline)
-        }
-        addAll(daySnapshots)
-      }
-
-      val steps = if (sequence.size < 2) {
-        0
-      } else {
-        sequence
-          .zipWithNext()
-          .sumOf { (previous, current) -> resolveStepIncrement(previous, current) }
-          .coerceIn(0L, Int.MAX_VALUE.toLong())
-          .toInt()
-      }
-
-      DeviceStepDailyRecord(
-        recordedOn = date.toString(),
-        steps = steps,
-        sampledAtIso = daySnapshots.lastOrNull()?.let { toIsoInstant(it.recordedAtEpochMs) }
-      )
+      buildDailyRecord(store, startDate.plusDays(index.toLong()))
     }
+  }
+
+  private fun buildDailyRecord(
+    store: DeviceStepSnapshotStore,
+    date: LocalDate,
+    additionalSnapshot: DeviceStepSnapshot? = null
+  ): DeviceStepDailyRecord {
+    val zoneId = ZoneId.systemDefault()
+    val dayStartEpochMs = date.atStartOfDay(zoneId).toInstant().toEpochMilli()
+    val dayEndEpochMs = date.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+    val baseline = store.getLatestSnapshotBefore(dayStartEpochMs)
+    val daySnapshots = store.getSnapshotsBetween(dayStartEpochMs, dayEndEpochMs)
+    val sequence = buildList {
+      if (baseline != null) {
+        add(baseline)
+      }
+      addAll(daySnapshots)
+      if (additionalSnapshot != null) {
+        val lastSnapshot = lastOrNull()
+        val isDuplicate = lastSnapshot != null &&
+          lastSnapshot.recordedAtEpochMs == additionalSnapshot.recordedAtEpochMs &&
+          lastSnapshot.elapsedRealtimeMs == additionalSnapshot.elapsedRealtimeMs &&
+          lastSnapshot.stepsSinceBoot == additionalSnapshot.stepsSinceBoot
+
+        if (!isDuplicate) {
+          add(additionalSnapshot)
+        }
+      }
+    }
+
+    val steps = if (sequence.size < 2) {
+      0
+    } else {
+      sequence
+        .zipWithNext()
+        .sumOf { (previous, current) -> resolveStepIncrement(previous, current) }
+        .coerceIn(0L, Int.MAX_VALUE.toLong())
+        .toInt()
+    }
+
+    val sampledAtIso = when {
+      additionalSnapshot != null && epochMsToLocalDate(additionalSnapshot.recordedAtEpochMs, zoneId) == date ->
+        toIsoInstant(additionalSnapshot.recordedAtEpochMs)
+      else -> daySnapshots.lastOrNull()?.let { toIsoInstant(it.recordedAtEpochMs) }
+    }
+
+    return DeviceStepDailyRecord(
+      recordedOn = date.toString(),
+      steps = steps,
+      sampledAtIso = sampledAtIso
+    )
+  }
+
+  private suspend fun ensureLiveUpdatesStarted() {
+    val context = reactApplicationContext
+    if (!isStepCounterSensorAvailable(context)) {
+      throw IllegalStateException("Step counter sensor unavailable.")
+    }
+    if (!hasActivityRecognitionPermission(context)) {
+      throw IllegalStateException("Activity recognition permission unavailable.")
+    }
+
+    DeviceStepCounterScheduler.ensureScheduled(context)
+
+    withContext(Dispatchers.Main) {
+      if (liveStepListener != null) {
+        return@withContext
+      }
+
+      val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        ?: throw IllegalStateException("Step counter service unavailable.")
+      val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+        ?: throw IllegalStateException("Step counter sensor unavailable.")
+
+      val listener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+          val value = event.values.firstOrNull() ?: return
+          handleLiveStepSensorChanged(value.toLong())
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+      }
+
+      val registered = sensorManager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_UI, mainHandler)
+      if (!registered) {
+        throw IllegalStateException("Unable to register live step counter listener.")
+      }
+
+      liveStepListener = listener
+    }
+  }
+
+  private fun stopLiveUpdatesInternal() {
+    val context = reactApplicationContext
+    val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: return
+    val listener = liveStepListener ?: return
+    liveStepListener = null
+    mainHandler.post {
+      sensorManager.unregisterListener(listener)
+    }
+  }
+
+  private fun handleLiveStepSensorChanged(stepsSinceBoot: Long) {
+    moduleScope.launch {
+      val context = reactApplicationContext
+      val snapshot = DeviceStepSnapshot(
+        recordedAtEpochMs = System.currentTimeMillis(),
+        elapsedRealtimeMs = SystemClock.elapsedRealtime(),
+        stepsSinceBoot = stepsSinceBoot
+      )
+
+      try {
+        val store = DeviceStepSnapshotStore(context)
+        val dailyRecord = try {
+          val latestSnapshot = store.getLatestSnapshot()
+          if (shouldPersistLiveSnapshot(latestSnapshot, snapshot)) {
+            store.insertSnapshot(snapshot)
+          }
+
+          buildDailyRecord(store, epochMsToLocalDate(snapshot.recordedAtEpochMs), snapshot)
+        } finally {
+          store.close()
+        }
+
+        DeviceStepCounterStateStore.saveReadSuccess(context, toIsoInstant(snapshot.recordedAtEpochMs))
+        emitLiveStepUpdate(dailyRecord)
+      } catch (error: Exception) {
+        DeviceStepCounterStateStore.saveReadFailure(context, error.message ?: "Device step counter live update failed.")
+      }
+    }
+  }
+
+  private fun shouldPersistLiveSnapshot(previous: DeviceStepSnapshot?, current: DeviceStepSnapshot): Boolean {
+    if (previous == null) {
+      return true
+    }
+    if (epochMsToLocalDate(previous.recordedAtEpochMs) != epochMsToLocalDate(current.recordedAtEpochMs)) {
+      return true
+    }
+    if (current.elapsedRealtimeMs < previous.elapsedRealtimeMs || current.stepsSinceBoot < previous.stepsSinceBoot) {
+      return true
+    }
+
+    return current.recordedAtEpochMs - previous.recordedAtEpochMs >= LIVE_SNAPSHOT_PERSIST_INTERVAL_MS
+  }
+
+  private fun emitLiveStepUpdate(record: DeviceStepDailyRecord) {
+    if (!reactApplicationContext.hasActiveCatalystInstance()) {
+      return
+    }
+
+    val payload = Arguments.createMap().apply {
+      putString("recordedOn", record.recordedOn)
+      putInt("steps", record.steps)
+      putString("sampledAt", record.sampledAtIso)
+      putString("sourceDevice", resolveDeviceName())
+      putString("sourceTimeZone", ZoneId.systemDefault().id)
+    }
+
+    reactApplicationContext
+      .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+      .emit(LIVE_UPDATE_EVENT_NAME, payload)
   }
 
   private fun resolveStepIncrement(previous: DeviceStepSnapshot, current: DeviceStepSnapshot): Long {
@@ -173,5 +353,7 @@ class DeviceStepCounterModule(
 
   companion object {
     const val MODULE_NAME = "DeviceStepCounter"
+    const val LIVE_UPDATE_EVENT_NAME = "deviceStepCounterLiveUpdate"
+    private const val LIVE_SNAPSHOT_PERSIST_INTERVAL_MS = 60_000L
   }
 }

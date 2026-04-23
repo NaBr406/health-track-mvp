@@ -7,16 +7,17 @@
  * 3. 用一套自绘血糖图表，把历史值和 8 小时预测统一展示出来。
  */
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Svg, { Circle, Line, Path } from "react-native-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { OutlineButton, Panel } from "../../components/clinical";
 import { api, isAuthExpiredError } from "../../lib/api";
+import { subscribeDeviceStepCounterLiveUpdates } from "../../lib/deviceStepCounter";
 import { formatDateTime, getTodayString, parseLeadingNumber } from "../../lib/utils";
 import { useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
 import { borders, colors, layout, radii, shadows, spacing, typography } from "../../theme/tokens";
-import type { AuthSession, DashboardMetric, DashboardSnapshot, GlucoseForecastPoint, HealthProfile, MonitoringHistoryPoint } from "../../types";
+import type { AuthSession, DashboardMetric, DashboardSnapshot, GlucoseForecastPoint, HealthProfile, MonitoringHistoryPoint, StepSyncRecord } from "../../types";
 
 type DashboardScreenProps = {
   session: AuthSession | null;
@@ -85,6 +86,8 @@ const GLUCOSE_DANGER_FILL = "rgba(217, 96, 96, 0.24)";
 const FORECAST_WINDOW_HOURS = 8;
 const FORECAST_HOUR_OFFSET_PRECISION = 2;
 const CURRENT_MARKER_SNAP_HOURS = 0.12;
+const DEVICE_STEP_COUNTER_PENDING_SOURCE = "已启用设备计步，等待下一次采样";
+const LIVE_STEP_SYNC_DEBOUNCE_MS = 15_000;
 
 export function DashboardScreen({
   session,
@@ -96,6 +99,8 @@ export function DashboardScreen({
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  const liveStepSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingLiveStepRecordRef = useRef<StepSyncRecord | null>(null);
   const { bottomInset, onScroll, onScrollBeginDrag, onScrollEndDrag, scrollEventThrottle } = useImmersiveTabBarScroll();
 
   useEffect(() => {
@@ -107,6 +112,63 @@ export function DashboardScreen({
     const timer = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeDeviceStepCounterLiveUpdates(
+      session,
+      (record) => {
+        pendingLiveStepRecordRef.current = record;
+        setSnapshot((current) => applyLiveStepRecord(current, record));
+
+        if (!session) {
+          return;
+        }
+
+        if (liveStepSyncTimerRef.current) {
+          clearTimeout(liveStepSyncTimerRef.current);
+        }
+
+        liveStepSyncTimerRef.current = setTimeout(() => {
+          liveStepSyncTimerRef.current = null;
+          const pendingRecord = pendingLiveStepRecordRef.current;
+          if (!pendingRecord) {
+            return;
+          }
+
+          void api
+            .syncLiveDeviceStepCounterRecord(pendingRecord, session)
+            .then(() => {
+              if (
+                pendingLiveStepRecordRef.current?.recordedOn === pendingRecord.recordedOn &&
+                pendingLiveStepRecordRef.current?.steps === pendingRecord.steps &&
+                pendingLiveStepRecordRef.current?.syncedAt === pendingRecord.syncedAt
+              ) {
+                pendingLiveStepRecordRef.current = null;
+              }
+            })
+            .catch((error) => {
+              if (!isAuthExpiredError(error)) {
+                // Live sync is best-effort. Local real-time display should remain responsive.
+              }
+            });
+        }, LIVE_STEP_SYNC_DEBOUNCE_MS);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+
+      if (liveStepSyncTimerRef.current) {
+        clearTimeout(liveStepSyncTimerRef.current);
+        liveStepSyncTimerRef.current = null;
+      }
+
+      const pendingRecord = pendingLiveStepRecordRef.current;
+      if (pendingRecord && session) {
+        void api.syncLiveDeviceStepCounterRecord(pendingRecord, session).catch(() => undefined);
+      }
+    };
+  }, [session?.userId]);
 
   async function loadSnapshot(initial = false) {
     // 首次进入和下拉刷新共用一个读取入口，
@@ -199,6 +261,62 @@ export function DashboardScreen({
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+function resolveLiveStepSource(record: StepSyncRecord) {
+  return record.steps > 0 ? record.source : DEVICE_STEP_COUNTER_PENDING_SOURCE;
+}
+
+function applyLiveStepRecord(snapshot: DashboardSnapshot | null, record: StepSyncRecord) {
+  if (!snapshot) {
+    return snapshot;
+  }
+
+  const liveSource = resolveLiveStepSource(record);
+  const nextMetrics = snapshot.metrics.some((metric) => metric.id === "steps")
+    ? snapshot.metrics.map((metric) =>
+        metric.id === "steps" && snapshot.focusDate === record.recordedOn
+          ? (() => {
+              const currentSteps = parseLeadingNumber(metric.value) ?? 0;
+              const nextSteps = Math.max(currentSteps, record.steps);
+              return {
+                ...metric,
+                value: `${nextSteps}`,
+                source: record.steps >= currentSteps ? liveSource : metric.source
+              };
+            })()
+          : metric
+      )
+    : snapshot.focusDate === record.recordedOn
+      ? [
+          ...snapshot.metrics,
+          {
+            id: "steps",
+            label: "步数",
+            value: `${record.steps}`,
+            unit: "步",
+            descriptor: "低强度活动",
+            source: liveSource
+          }
+        ]
+      : snapshot.metrics;
+
+  const nextHistory = snapshot.history.map((point) =>
+    point.date === record.recordedOn
+      ? {
+          ...point,
+          steps: Math.max(point.steps, record.steps),
+          stepsSource: record.steps >= point.steps ? liveSource : point.stepsSource
+        }
+      : point
+  );
+
+  return {
+    ...snapshot,
+    refreshedAt: new Date().toISOString(),
+    metrics: nextMetrics,
+    history: nextHistory
+  };
 }
 
 function RingMetricCard({ metric }: { metric: MetricCardMeta }) {

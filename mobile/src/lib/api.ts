@@ -530,6 +530,22 @@ async function getMergedLocalStepRecords(session?: AuthSession | null, focusDate
   return mergeStepRecords(deviceStepCounter.state.status === "ready" ? deviceStepCounter.records : []);
 }
 
+async function syncStepRecordsToServer(
+  identity: DataIdentity,
+  records: ServerStepRecordSyncRequest["records"]
+) {
+  if (!identity.session || records.length === 0) {
+    return;
+  }
+
+  await request("/api/records/steps/sync", {
+    method: "POST",
+    body: JSON.stringify({
+      records
+    } satisfies ServerStepRecordSyncRequest)
+  });
+}
+
 async function syncStepSources(identity: DataIdentity, focusDate?: string) {
   const taskKey = getStepSyncTaskKey(identity, focusDate);
   const existingTask = stepSyncTasks.get(taskKey);
@@ -556,12 +572,7 @@ async function syncStepSources(identity: DataIdentity, focusDate?: string) {
     }
 
     try {
-      await request("/api/records/steps/sync", {
-        method: "POST",
-        body: JSON.stringify({
-          records: mergedRecords
-        } satisfies ServerStepRecordSyncRequest)
-      });
+      await syncStepRecordsToServer(identity, mergedRecords);
     } catch (error) {
       if (deviceStepCounterRecords.length > 0) {
         await markDeviceStepCounterSyncFailure(identity.session, error);
@@ -746,6 +757,21 @@ export const api = {
   async syncStepSources(sessionOverride?: AuthSession | null, focusDate?: string) {
     const identity = await resolveIdentity(sessionOverride);
     await syncStepSources(identity, focusDate);
+  },
+
+  async syncLiveDeviceStepCounterRecord(record: StepSyncRecord, sessionOverride?: AuthSession | null) {
+    const identity = await resolveIdentity(sessionOverride);
+    if (!identity.session) {
+      return;
+    }
+
+    try {
+      await syncStepRecordsToServer(identity, [record]);
+      await markDeviceStepCounterSyncSuccess(identity.session, 1);
+    } catch (error) {
+      await markDeviceStepCounterSyncFailure(identity.session, error);
+      throw error;
+    }
   },
 
   openDeviceStepCounterSettings() {

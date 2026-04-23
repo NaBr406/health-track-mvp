@@ -1,4 +1,4 @@
-import { Linking, NativeModules, PermissionsAndroid, Platform } from "react-native";
+import { Linking, NativeEventEmitter, NativeModules, PermissionsAndroid, Platform } from "react-native";
 import type { AuthSession, DeviceStepCounterSyncState, StepSyncRecord } from "../types";
 import { loadDeviceStepCounterCache, saveDeviceStepCounterCache } from "./deviceStepCounterStorage";
 import { getTodayString } from "./utils";
@@ -21,6 +21,10 @@ type NativeDeviceStepCounterModule = {
       sampledAt?: string | null;
     }>
   >;
+  startLiveUpdates(): Promise<boolean>;
+  stopLiveUpdates(): Promise<boolean>;
+  addListener(eventName: string): void;
+  removeListeners(count: number): void;
 };
 
 type ReadStepOptions = {
@@ -28,8 +32,17 @@ type ReadStepOptions = {
   endDate?: string;
 };
 
+type DeviceStepCounterLiveUpdatePayload = {
+  recordedOn?: string | null;
+  steps?: number | null;
+  sampledAt?: string | null;
+  sourceDevice?: string | null;
+  sourceTimeZone?: string | null;
+};
+
 const ACTIVITY_RECOGNITION_PERMISSION =
   PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION ?? "android.permission.ACTIVITY_RECOGNITION";
+const DEVICE_STEP_COUNTER_LIVE_UPDATE_EVENT = "deviceStepCounterLiveUpdate";
 
 export const DEVICE_STEP_COUNTER_SOURCE = "设备传感器";
 
@@ -40,6 +53,10 @@ function getDeviceStepCounterModule(): NativeDeviceStepCounterModule | null {
 
   const candidate = NativeModules.DeviceStepCounter;
   return candidate ? (candidate as NativeDeviceStepCounterModule) : null;
+}
+
+function getDeviceStepCounterEmitter(module: NativeDeviceStepCounterModule) {
+  return new NativeEventEmitter(module as never);
 }
 
 function resolveTimeZone() {
@@ -77,6 +94,25 @@ function getErrorMessage(error: unknown) {
     return error.message.trim();
   }
   return "Device step counter request failed.";
+}
+
+function normalizeLiveUpdateRecord(payload: DeviceStepCounterLiveUpdatePayload): StepSyncRecord | null {
+  const recordedOn = typeof payload.recordedOn === "string" && payload.recordedOn.trim() ? payload.recordedOn : getTodayString();
+  const parsedSteps = typeof payload.steps === "number" ? payload.steps : Number(payload.steps);
+  if (!Number.isFinite(parsedSteps)) {
+    return null;
+  }
+
+  const sampledAt = typeof payload.sampledAt === "string" && payload.sampledAt.trim() ? payload.sampledAt : new Date().toISOString();
+
+  return {
+    recordedOn,
+    steps: Math.max(0, Math.trunc(parsedSteps)),
+    source: DEVICE_STEP_COUNTER_SOURCE,
+    sourceDevice: payload.sourceDevice ?? null,
+    sourceTimeZone: payload.sourceTimeZone ?? resolveTimeZone(),
+    syncedAt: sampledAt
+  };
 }
 
 async function saveCacheState(
@@ -317,6 +353,41 @@ export async function markDeviceStepCounterSyncFailure(session: AuthSession | nu
   );
 
   return saveCacheState(state, session, cache.records);
+}
+
+export function subscribeDeviceStepCounterLiveUpdates(
+  session: AuthSession | null | undefined,
+  onUpdate: (record: StepSyncRecord) => void,
+  onError?: (error: unknown) => void
+) {
+  const module = getDeviceStepCounterModule();
+  if (!module) {
+    return () => undefined;
+  }
+
+  const emitter = getDeviceStepCounterEmitter(module);
+  let active = true;
+  const subscription = emitter.addListener(DEVICE_STEP_COUNTER_LIVE_UPDATE_EVENT, (payload: DeviceStepCounterLiveUpdatePayload) => {
+    const record = normalizeLiveUpdateRecord(payload);
+    if (!active || !record) {
+      return;
+    }
+
+    onUpdate(record);
+  });
+
+  void module.startLiveUpdates().catch((error) => {
+    subscription.remove();
+    if (active) {
+      onError?.(error);
+    }
+  });
+
+  return () => {
+    active = false;
+    subscription.remove();
+    void module.stopLiveUpdates();
+  };
 }
 
 export function openDeviceStepCounterSettings() {
