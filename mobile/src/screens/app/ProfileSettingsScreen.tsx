@@ -34,8 +34,8 @@ export function ProfileSettingsScreen({
     {
       key: "sync",
       icon: "cloud-done-outline",
-      title: "数据同步状态",
-      subtitle: session ? "云端已同步" : "本机临时保存",
+      title: "数据与步数同步",
+      subtitle: session ? "云端档案 + 设备传感器计步" : "本机临时保存 + 可连接设备计步",
       onPress: () => onOpenDetail("sync")
     },
     {
@@ -88,7 +88,7 @@ export function ProfileSettingsScreen({
           </View>
 
           <Text style={styles.headerTitle}>设置</Text>
-          <Text style={styles.headerDescription}>主页里的设置内容已经收起到这里，便于集中管理。</Text>
+          <Text style={styles.headerDescription}>将账号、安全、同步和产品说明集中到这里，方便统一管理。</Text>
         </View>
 
         <View style={styles.sectionCard}>

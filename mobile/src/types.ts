@@ -59,6 +59,7 @@ export type MonitoringHistoryPoint = {
   calories: number;
   exerciseMinutes: number;
   steps: number;
+  stepsSource?: string | null;
   sleepHours: number;
   glucoseMmol?: number | null;
   glucoseSource?: "recorded" | "derived" | "default" | string | null;
@@ -120,4 +121,47 @@ export type DashboardFeedbackPayload = {
   adjustmentId: string;
   feedback: Exclude<AdjustmentFeedback, null>;
   focusDate?: string;
+};
+
+export type StepSyncRecord = {
+  recordedOn: string;
+  steps: number;
+  source: string;
+  sourceDevice?: string | null;
+  sourceTimeZone?: string | null;
+  syncedAt: string;
+};
+
+export type HealthConnectSdkStatus = "available" | "unavailable" | "update_required";
+
+export type HealthConnectSyncStatus = "unsupported" | "unavailable" | "update_required" | "needs_permission" | "ready" | "error";
+
+export type HealthConnectSyncState = {
+  status: HealthConnectSyncStatus;
+  sdkStatus: HealthConnectSdkStatus;
+  permissionsGranted: boolean;
+  lastCheckedAt: string;
+  lastReadAt?: string | null;
+  lastSyncedAt?: string | null;
+  lastError?: string | null;
+  syncedDays?: number | null;
+  sourceTimeZone?: string | null;
+};
+
+export type DeviceStepCounterSyncStatus = "unsupported" | "needs_permission" | "ready" | "error";
+
+export type DeviceStepCounterSyncState = {
+  status: DeviceStepCounterSyncStatus;
+  sensorAvailable: boolean;
+  permissionsGranted: boolean;
+  backgroundSamplingEnabled: boolean;
+  lastCheckedAt: string;
+  lastReadAt?: string | null;
+  lastSampledAt?: string | null;
+  lastSyncedAt?: string | null;
+  lastError?: string | null;
+  syncedDays?: number | null;
+  sourceTimeZone?: string | null;
+  sourceDevice?: string | null;
+  samplingIntervalMinutes?: number | null;
 };

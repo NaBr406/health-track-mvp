@@ -7,6 +7,7 @@ import com.healthtrack.mvp.domain.User;
 import com.healthtrack.mvp.domain.UserProfile;
 import com.healthtrack.mvp.dto.AdviceDtos.DailyAdviceResponse;
 import com.healthtrack.mvp.dto.DashboardDtos.AdjustmentFeedbackRequest;
+import com.healthtrack.mvp.dto.DashboardDtos.DailySummaryPoint;
 import com.healthtrack.mvp.dto.DashboardDtos.DashboardMetricResponse;
 import com.healthtrack.mvp.dto.DashboardDtos.DashboardSnapshotResponse;
 import com.healthtrack.mvp.dto.DashboardDtos.DashboardSummaryResponse;
@@ -51,6 +52,8 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 @RequiredArgsConstructor
 public class InteractionService {
+
+    private static final String DEVICE_STEP_COUNTER_PENDING_SOURCE = "已启用设备计步，等待下一次采样";
 
     private static final String DATA_SOURCE = "server";
     private static final double DEFAULT_SLEEP_HOURS = 6.5;
@@ -160,6 +163,10 @@ public class InteractionService {
         DailyAdviceResponse advice = adviceService.getDailyAdvice(userId, date);
         UserProfile profile = userProfileRepository.findByUserId(userId).orElse(null);
         DayState dayState = dayStateStore.computeIfAbsent(dayKey(userId, date), ignored -> new DayState());
+        DailySummaryPoint focusSummaryPoint = summary.weeklyActivity().stream()
+                .filter(point -> Objects.equals(point.date(), date))
+                .findFirst()
+                .orElse(null);
         Double recordedGlucose = summary.weeklyActivity().stream()
                 .filter(point -> Objects.equals(point.date(), date))
                 .map(point -> point.glucoseMmol())
@@ -168,7 +175,8 @@ public class InteractionService {
                 .orElse(null);
 
         double glucose = resolveDashboardGlucose(dayState, recordedGlucose);
-        int steps = dayState.steps() != null ? dayState.steps() : Math.max(0, safeInt(summary.totalExerciseMinutes()) * 180);
+        int steps = resolveDashboardSteps(dayState, focusSummaryPoint, summary.totalExerciseMinutes());
+        String stepMetricSource = resolveDashboardStepMetricSource(dayState, focusSummaryPoint, summary.totalExerciseMinutes());
         double sleepHours = dayState.sleepHours() != null ? dayState.sleepHours() : DEFAULT_SLEEP_HOURS;
         int calorieGap = Math.max(safeInt(summary.totalCalories()) - safeInt(summary.dailyCalorieGoal()), 0);
         String feedback = feedbackStore.get(dayKey(userId, date));
@@ -178,7 +186,7 @@ public class InteractionService {
                 new DashboardMetricResponse("glucose", "血糖", formatDecimal(glucose), "mmol/L", resolveGlucoseMetricDescriptor(dayState, recordedGlucose), resolveGlucoseMetricSource(dayState, recordedGlucose)),
                 new DashboardMetricResponse("calories", "热量", String.valueOf(safeInt(summary.totalCalories())), "kcal", "今日总摄入", "后端归档"),
                 new DashboardMetricResponse("exercise", "运动", String.valueOf(safeInt(summary.totalExerciseMinutes())), "min", "主动训练时长", "后端归档"),
-                new DashboardMetricResponse("steps", "步数", String.valueOf(steps), "步", "低强度活动", dayState.steps() != null ? "对话解析" : "运动时长推算"),
+                new DashboardMetricResponse("steps", "步数", String.valueOf(steps), "步", "低强度活动", stepMetricSource),
                 new DashboardMetricResponse("sleep", "睡眠", formatDecimal(sleepHours), "h", "恢复窗口", dayState.sleepHours() != null ? "对话解析" : "默认回填"),
                 new DashboardMetricResponse("completion", "完成度", String.valueOf(safeInt(summary.goalCompletionRate())), "%", "综合执行估计", "推演引擎")
         );
@@ -198,7 +206,8 @@ public class InteractionService {
                             point.date(),
                             safeInt(point.calories()),
                             safeInt(point.exerciseMinutes()),
-                            focusPoint && dayState.steps() != null ? dayState.steps() : Math.max(0, safeInt(point.exerciseMinutes()) * 180),
+                            resolveHistorySteps(point, focusPoint, dayState),
+                            resolveHistoryStepSource(point, focusPoint, dayState),
                             focusPoint && dayState.sleepHours() != null ? dayState.sleepHours() : DEFAULT_SLEEP_HOURS,
                             historyGlucose != null ? historyGlucose : DEFAULT_GLUCOSE,
                             glucoseSource
@@ -607,6 +616,54 @@ public class InteractionService {
             return "local".equals(dayState.forecastSource()) ? "规则模拟" : "Dify 工作流";
         }
         return "默认基线";
+    }
+
+    private int resolveDashboardSteps(DayState dayState, DailySummaryPoint point, Integer totalExerciseMinutes) {
+        int persistedSteps = point != null ? safeInt(point.steps()) : 0;
+
+        if (dayState.steps() != null) {
+            return Math.max(dayState.steps(), persistedSteps);
+        }
+        return persistedSteps;
+    }
+
+    private String resolveDashboardStepMetricSource(DayState dayState, DailySummaryPoint point, Integer totalExerciseMinutes) {
+        int persistedSteps = point != null ? safeInt(point.steps()) : 0;
+
+        if (dayState.steps() != null && dayState.steps() > persistedSteps) {
+            return "对话解析";
+        }
+        if (point != null && StringUtils.hasText(point.stepsSource())) {
+            return persistedSteps > 0 ? point.stepsSource() : DEVICE_STEP_COUNTER_PENDING_SOURCE;
+        }
+        if (persistedSteps > 0) {
+            return "设备传感器";
+        }
+        return "连接设备步数后自动同步";
+    }
+
+    private int resolveHistorySteps(DailySummaryPoint point, boolean focusPoint, DayState dayState) {
+        int persistedSteps = safeInt(point.steps());
+
+        if (focusPoint && dayState.steps() != null) {
+            return Math.max(dayState.steps(), persistedSteps);
+        }
+        return persistedSteps;
+    }
+
+    private String resolveHistoryStepSource(DailySummaryPoint point, boolean focusPoint, DayState dayState) {
+        int persistedSteps = safeInt(point.steps());
+
+        if (focusPoint && dayState.steps() != null && dayState.steps() > persistedSteps) {
+            return "对话解析";
+        }
+        if (StringUtils.hasText(point.stepsSource())) {
+            return persistedSteps > 0 ? point.stepsSource() : DEVICE_STEP_COUNTER_PENDING_SOURCE;
+        }
+        if (persistedSteps > 0) {
+            return "设备传感器";
+        }
+        return "连接设备步数后自动同步";
     }
 
     private boolean isHighRisk(String riskLevel) {

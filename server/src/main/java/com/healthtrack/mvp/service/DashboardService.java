@@ -4,6 +4,7 @@ import com.healthtrack.mvp.domain.AiAdviceLog;
 import com.healthtrack.mvp.domain.CareRecord;
 import com.healthtrack.mvp.domain.DietRecord;
 import com.healthtrack.mvp.domain.ExerciseRecord;
+import com.healthtrack.mvp.domain.StepRecord;
 import com.healthtrack.mvp.domain.UserProfile;
 import com.healthtrack.mvp.dto.DashboardDtos.DailySummaryPoint;
 import com.healthtrack.mvp.dto.DashboardDtos.DashboardSummaryResponse;
@@ -11,6 +12,7 @@ import com.healthtrack.mvp.repository.AiAdviceLogRepository;
 import com.healthtrack.mvp.repository.CareRecordRepository;
 import com.healthtrack.mvp.repository.DietRecordRepository;
 import com.healthtrack.mvp.repository.ExerciseRecordRepository;
+import com.healthtrack.mvp.repository.StepRecordRepository;
 import com.healthtrack.mvp.repository.UserProfileRepository;
 import java.time.LocalDate;
 import java.util.HashMap;
@@ -43,6 +45,7 @@ public class DashboardService {
     private final UserProfileRepository userProfileRepository;
     private final DietRecordRepository dietRecordRepository;
     private final ExerciseRecordRepository exerciseRecordRepository;
+    private final StepRecordRepository stepRecordRepository;
     private final CareRecordRepository careRecordRepository;
     private final AiAdviceLogRepository aiAdviceLogRepository;
 
@@ -60,17 +63,25 @@ public class DashboardService {
                 .findByUserIdAndRecordedOnBetweenOrderByRecordedOnDescCreatedAtDesc(userId, weekStart, focusDate);
         List<ExerciseRecord> exercises = exerciseRecordRepository
                 .findByUserIdAndRecordedOnBetweenOrderByRecordedOnDescCreatedAtDesc(userId, weekStart, focusDate);
+        List<StepRecord> stepRecords = stepRecordRepository
+                .findByUserIdAndRecordedOnBetweenOrderByRecordedOnDescUpdatedAtDesc(userId, weekStart, focusDate);
         List<CareRecord> cares = careRecordRepository
                 .findByUserIdAndRecordedOnBetweenOrderByRecordedOnDescCreatedAtDesc(userId, weekStart, focusDate);
         UserProfile profile = userProfileRepository.findByUserId(userId).orElse(null);
 
         Map<LocalDate, Integer> caloriesByDate = new HashMap<>();
         Map<LocalDate, Integer> exerciseByDate = new HashMap<>();
+        Map<LocalDate, Integer> stepsByDate = new HashMap<>();
+        Map<LocalDate, String> stepSourceByDate = new HashMap<>();
         Map<LocalDate, Integer> careByDate = new HashMap<>();
         Map<LocalDate, Double> glucoseByDate = new HashMap<>();
 
         diets.forEach(record -> caloriesByDate.merge(record.getRecordedOn(), safeInt(record.getCalories()), Integer::sum));
         exercises.forEach(record -> exerciseByDate.merge(record.getRecordedOn(), safeInt(record.getDurationMinutes()), Integer::sum));
+        stepRecords.forEach(record -> {
+            stepsByDate.put(record.getRecordedOn(), safeInt(record.getSteps()));
+            stepSourceByDate.put(record.getRecordedOn(), normalizeStepSource(record.getSource()));
+        });
         cares.forEach(record -> careByDate.merge(record.getRecordedOn(), safeInt(record.getDurationMinutes()), Integer::sum));
         cares.forEach(record -> {
             // 旧数据可能只把血糖写在备注里，这里顺带补做一次解析以兼容历史记录。
@@ -104,6 +115,8 @@ public class DashboardService {
                             currentDate,
                             caloriesByDate.getOrDefault(currentDate, 0),
                             exerciseByDate.getOrDefault(currentDate, 0),
+                            stepsByDate.getOrDefault(currentDate, 0),
+                            stepSourceByDate.get(currentDate),
                             careByDate.getOrDefault(currentDate, 0),
                             glucoseByDate.get(currentDate)
                     );
@@ -153,6 +166,15 @@ public class DashboardService {
 
     private int safeInt(Integer value) {
         return value == null ? 0 : value;
+    }
+
+    private String normalizeStepSource(String source) {
+        if (!StringUtils.hasText(source)) {
+            return null;
+        }
+
+        String normalized = source.trim();
+        return "Health Connect sync".equalsIgnoreCase(normalized) ? "设备传感器" : normalized;
     }
 
     /**

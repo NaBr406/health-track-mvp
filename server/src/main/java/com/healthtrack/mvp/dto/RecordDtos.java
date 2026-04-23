@@ -1,11 +1,14 @@
 package com.healthtrack.mvp.dto;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 饮食、运动、护理记录接口使用的 DTO 定义集合。
@@ -60,6 +63,34 @@ public final class RecordDtos {
             String intensity,
             String note,
             LocalDateTime createdAt
+    ) {
+    }
+
+    public record StepRecordSyncItemRequest(
+            @NotNull LocalDate recordedOn,
+            @NotNull @Min(0) Integer steps,
+            String source,
+            String sourceDevice,
+            String sourceTimeZone,
+            LocalDateTime syncedAt
+    ) {
+    }
+
+    public record StepRecordSyncRequest(
+            @NotEmpty List<@Valid StepRecordSyncItemRequest> records
+    ) {
+    }
+
+    public record StepRecordResponse(
+            Long id,
+            LocalDate recordedOn,
+            Integer steps,
+            String source,
+            String sourceDevice,
+            String sourceTimeZone,
+            LocalDateTime syncedAt,
+            LocalDateTime createdAt,
+            LocalDateTime updatedAt
     ) {
     }
 

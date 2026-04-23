@@ -9,6 +9,16 @@
  */
 import { invalidateStoredSession, loadToken } from "./auth";
 import { getDataScopeKey, loadDataScope } from "./dataScope";
+import {
+  DEVICE_STEP_COUNTER_SOURCE,
+  getCachedDeviceStepCounterState,
+  markDeviceStepCounterSyncFailure,
+  markDeviceStepCounterSyncSuccess,
+  openDeviceStepCounterSettings as openDeviceStepCounterSettingsApp,
+  readDeviceStepCounterRecords,
+  refreshDeviceStepCounterState,
+  requestDeviceStepCounterPermission
+} from "./deviceStepCounter";
 import { loadStoredHealthProfile, saveStoredHealthProfile } from "./healthProfileStorage";
 import {
   getFallbackChatThread,
@@ -26,7 +36,8 @@ import type {
   ChatSendResult,
   DashboardFeedbackPayload,
   DashboardSnapshot,
-  HealthProfile
+  HealthProfile,
+  StepSyncRecord
 } from "../types";
 
 const RELEASE_API_BASE_URL = "http://150.158.117.174";
@@ -80,12 +91,25 @@ type ServerCareRecordResponse = {
   glucoseMmol?: number | null;
 };
 
+type ServerStepRecordSyncRequest = {
+  records: Array<{
+    recordedOn: string;
+    steps: number;
+    source: string;
+    sourceDevice?: string | null;
+    sourceTimeZone?: string | null;
+    syncedAt: string;
+  }>;
+};
+
 type DataIdentity = {
   session: AuthSession | null;
   scopeKey: string;
 };
 
 const glucoseRecoveryTasks = new Map<string, Promise<void>>();
+const stepSyncTasks = new Map<string, Promise<void>>();
+const DEVICE_STEP_COUNTER_PENDING_SOURCE = "已启用设备计步，等待下一次采样";
 
 function buildUrl(path: string) {
   return `${API_BASE_URL}${path}`;
@@ -392,6 +416,171 @@ async function recoverAccountGlucoseRecords(identity: DataIdentity) {
   await task;
 }
 
+function getStepSyncTaskKey(identity: DataIdentity, focusDate?: string) {
+  return `${identity.scopeKey}:${focusDate ?? "today"}`;
+}
+
+function getStepRecordSourcePriority(record: Pick<StepSyncRecord, "source">) {
+  if (record.source === DEVICE_STEP_COUNTER_SOURCE) {
+    return 1;
+  }
+  return 0;
+}
+
+function resolveDisplayStepSource(record: Pick<StepSyncRecord, "source" | "steps">) {
+  if (record.source === DEVICE_STEP_COUNTER_SOURCE && record.steps <= 0) {
+    return DEVICE_STEP_COUNTER_PENDING_SOURCE;
+  }
+
+  return record.source;
+}
+
+function shouldPreferStepRecord(candidate: StepSyncRecord, current: StepSyncRecord) {
+  if (candidate.steps !== current.steps) {
+    return candidate.steps > current.steps;
+  }
+
+  return getStepRecordSourcePriority(candidate) > getStepRecordSourcePriority(current);
+}
+
+function mergeStepRecords(records: StepSyncRecord[]) {
+  const recordsByDate = new Map<string, StepSyncRecord>();
+
+  records.forEach((record) => {
+    const current = recordsByDate.get(record.recordedOn);
+    if (!current || shouldPreferStepRecord(record, current)) {
+      recordsByDate.set(record.recordedOn, record);
+    }
+  });
+
+  return [...recordsByDate.values()].sort((left, right) => left.recordedOn.localeCompare(right.recordedOn));
+}
+
+function getMetricNumericValue(snapshot: DashboardSnapshot, metricId: string) {
+  const raw = snapshot.metrics.find((metric) => metric.id === metricId)?.value;
+  if (!raw) {
+    return 0;
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function mergeDashboardSnapshotWithStepRecords(snapshot: DashboardSnapshot, stepRecords: ServerStepRecordSyncRequest["records"]) {
+  if (stepRecords.length === 0) {
+    return snapshot;
+  }
+
+  const stepsByDate = new Map(stepRecords.map((record) => [record.recordedOn, record]));
+  const focusStepRecord = stepsByDate.get(snapshot.focusDate);
+  const existingFocusMetricValue = getMetricNumericValue(snapshot, "steps");
+  const resolvedFocusSteps = focusStepRecord ? Math.max(existingFocusMetricValue, focusStepRecord.steps) : existingFocusMetricValue;
+  const resolvedFocusSource =
+    focusStepRecord && focusStepRecord.steps >= existingFocusMetricValue
+      ? resolveDisplayStepSource(focusStepRecord)
+      : snapshot.metrics.find((metric) => metric.id === "steps")?.source ?? "连接设备步数后自动同步";
+
+  const nextMetrics = snapshot.metrics.some((metric) => metric.id === "steps")
+    ? snapshot.metrics.map((metric) =>
+        metric.id === "steps"
+          ? {
+              ...metric,
+              value: `${resolvedFocusSteps}`,
+              source: resolvedFocusSource
+            }
+          : metric
+      )
+    : [
+        ...snapshot.metrics,
+        {
+          id: "steps",
+          label: "步数",
+          value: `${resolvedFocusSteps}`,
+          unit: "步",
+          descriptor: "低强度活动",
+          source: resolvedFocusSource
+        }
+      ];
+
+  const nextHistory = snapshot.history.map((point) => {
+    const synced = stepsByDate.get(point.date);
+    if (!synced) {
+      return point;
+    }
+
+    const nextSteps = Math.max(point.steps, synced.steps);
+    return {
+      ...point,
+      steps: nextSteps,
+      stepsSource:
+        synced.steps >= point.steps ? resolveDisplayStepSource(synced) : point.stepsSource ?? resolveDisplayStepSource(synced)
+    };
+  });
+
+  return {
+    ...snapshot,
+    metrics: nextMetrics,
+    history: nextHistory
+  };
+}
+
+async function getMergedLocalStepRecords(session?: AuthSession | null, focusDate?: string) {
+  const deviceStepCounter = await readDeviceStepCounterRecords(session, { endDate: focusDate, days: 7 });
+
+  return mergeStepRecords(deviceStepCounter.state.status === "ready" ? deviceStepCounter.records : []);
+}
+
+async function syncStepSources(identity: DataIdentity, focusDate?: string) {
+  const taskKey = getStepSyncTaskKey(identity, focusDate);
+  const existingTask = stepSyncTasks.get(taskKey);
+  if (existingTask) {
+    await existingTask;
+    return;
+  }
+
+  const task = (async () => {
+    const deviceStepCounterOutcome = await readDeviceStepCounterRecords(identity.session, { endDate: focusDate, days: 7 })
+      .then((result) => ({ result, error: null as unknown }))
+      .catch((error) => ({ result: null, error }));
+
+    if (deviceStepCounterOutcome.error) {
+      await markDeviceStepCounterSyncFailure(identity.session, deviceStepCounterOutcome.error);
+    }
+
+    const deviceStepCounterRecords =
+      deviceStepCounterOutcome.result?.state.status === "ready" ? deviceStepCounterOutcome.result.records : [];
+    const mergedRecords = mergeStepRecords(deviceStepCounterRecords);
+
+    if (!identity.session || mergedRecords.length === 0) {
+      return;
+    }
+
+    try {
+      await request("/api/records/steps/sync", {
+        method: "POST",
+        body: JSON.stringify({
+          records: mergedRecords
+        } satisfies ServerStepRecordSyncRequest)
+      });
+    } catch (error) {
+      if (deviceStepCounterRecords.length > 0) {
+        await markDeviceStepCounterSyncFailure(identity.session, error);
+      }
+      throw error;
+    }
+
+    const deviceStepCounterSyncedDays = mergedRecords.filter((record) => record.source === DEVICE_STEP_COUNTER_SOURCE).length;
+    if (!deviceStepCounterOutcome.error && deviceStepCounterSyncedDays > 0) {
+      await markDeviceStepCounterSyncSuccess(identity.session, deviceStepCounterSyncedDays);
+    }
+  })().finally(() => {
+    stepSyncTasks.delete(taskKey);
+  });
+
+  stepSyncTasks.set(taskKey, task);
+  await task;
+}
+
 export const api = {
   login(payload: LoginPayload) {
     return request<AuthSession>("/api/auth/login", {
@@ -461,7 +650,15 @@ export const api = {
     const identity = await resolveIdentity();
 
     if (!identity.session) {
-      return getFallbackDashboardSnapshot(identity.scopeKey, date);
+      try {
+        await syncStepSources(identity, date);
+      } catch {
+        // Reading device steps should not block guest-mode rendering.
+      }
+
+      const fallbackSnapshot = await getFallbackDashboardSnapshot(identity.scopeKey, date);
+      const deviceSteps = await getMergedLocalStepRecords(identity.session, date);
+      return mergeDashboardSnapshotWithStepRecords(fallbackSnapshot, deviceSteps);
     }
 
     try {
@@ -470,9 +667,22 @@ export const api = {
       // 数据补偿属于尽力而为，失败时不应该阻塞当前页面读取。
     }
 
-    return request<DashboardSnapshot>(`/api/dashboard/snapshot${buildQuery({ date })}`, {}, () =>
+    try {
+      await syncStepSources(identity, date);
+    } catch {
+      // Step sync is best-effort and should not block the dashboard.
+    }
+
+    const snapshot = await request<DashboardSnapshot>(`/api/dashboard/snapshot${buildQuery({ date })}`, {}, () =>
       getFallbackDashboardSnapshot(identity.scopeKey, date)
     );
+
+    if (snapshot.dataSource === "server") {
+      return snapshot;
+    }
+
+    const deviceSteps = await getMergedLocalStepRecords(identity.session, date);
+    return mergeDashboardSnapshotWithStepRecords(snapshot, deviceSteps);
   },
 
   async getChatThread(date?: string) {
@@ -509,5 +719,36 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     });
+  },
+
+  async getDeviceStepCounterSyncStatus(sessionOverride?: AuthSession | null) {
+    const identity = await resolveIdentity(sessionOverride);
+    return refreshDeviceStepCounterState(identity.session);
+  },
+
+  async connectDeviceStepCounter(sessionOverride?: AuthSession | null, focusDate?: string) {
+    const identity = await resolveIdentity(sessionOverride);
+    const state = await requestDeviceStepCounterPermission(identity.session);
+
+    if (state.status === "ready") {
+      await syncStepSources(identity, focusDate);
+    }
+
+    return refreshDeviceStepCounterState(identity.session);
+  },
+
+  async syncDeviceStepCounter(sessionOverride?: AuthSession | null, focusDate?: string) {
+    const identity = await resolveIdentity(sessionOverride);
+    await syncStepSources(identity, focusDate);
+    return (await getCachedDeviceStepCounterState(identity.session)) ?? refreshDeviceStepCounterState(identity.session);
+  },
+
+  async syncStepSources(sessionOverride?: AuthSession | null, focusDate?: string) {
+    const identity = await resolveIdentity(sessionOverride);
+    await syncStepSources(identity, focusDate);
+  },
+
+  openDeviceStepCounterSettings() {
+    openDeviceStepCounterSettingsApp();
   }
 };

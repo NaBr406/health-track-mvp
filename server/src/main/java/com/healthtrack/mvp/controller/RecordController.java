@@ -6,6 +6,8 @@ import com.healthtrack.mvp.dto.RecordDtos.DietRecordRequest;
 import com.healthtrack.mvp.dto.RecordDtos.DietRecordResponse;
 import com.healthtrack.mvp.dto.RecordDtos.ExerciseRecordRequest;
 import com.healthtrack.mvp.dto.RecordDtos.ExerciseRecordResponse;
+import com.healthtrack.mvp.dto.RecordDtos.StepRecordResponse;
+import com.healthtrack.mvp.dto.RecordDtos.StepRecordSyncRequest;
 import com.healthtrack.mvp.service.RecordService;
 import com.healthtrack.mvp.util.SecurityUtils;
 import jakarta.validation.Valid;
@@ -56,6 +58,20 @@ public class RecordController {
     @PostMapping("/exercise")
     public ExerciseRecordResponse addExerciseRecord(@Valid @RequestBody ExerciseRecordRequest request) {
         return recordService.addExerciseRecord(SecurityUtils.currentUserId(), request);
+    }
+
+    @GetMapping("/steps")
+    public List<StepRecordResponse> getStepRecords(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate
+    ) {
+        return recordService.getStepRecords(SecurityUtils.currentUserId(), date, startDate, endDate);
+    }
+
+    @PostMapping("/steps/sync")
+    public List<StepRecordResponse> syncStepRecords(@Valid @RequestBody StepRecordSyncRequest request) {
+        return recordService.syncStepRecords(SecurityUtils.currentUserId(), request);
     }
 
     @GetMapping("/care")

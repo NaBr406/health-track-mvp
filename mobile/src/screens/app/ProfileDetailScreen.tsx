@@ -1,10 +1,12 @@
 /**
  * 档案详情页，把已保存的健康信息整理成多个只读分区展示。
  */
+import { useEffect, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { OutlineButton } from "../../components/clinical";
+import { api, isAuthExpiredError } from "../../lib/api";
 import {
   getDisplayText,
   getMaskedAccountIdentifier,
@@ -14,9 +16,9 @@ import {
   hasValue,
   type StatusTone
 } from "../../lib/profilePresentation";
-import { formatDisplayDate } from "../../lib/utils";
+import { formatDateTime, formatDisplayDate } from "../../lib/utils";
 import { colors, fonts, layout, radii, shadows, spacing, typography } from "../../theme/tokens";
-import type { AuthSession, HealthProfile } from "../../types";
+import type { AuthSession, DeviceStepCounterSyncState, HealthProfile } from "../../types";
 import type { ProfileDetailKind } from "./profileDetailTypes";
 
 type ProfileDetailScreenProps = {
@@ -68,16 +70,84 @@ export function ProfileDetailScreen({
   const maskedIdentifier = getMaskedAccountIdentifier(profile, session);
   const updatedAt = profile?.updatedAt ? formatDisplayDate(profile.updatedAt.slice(0, 10)) : "暂无更新";
 
+  const [deviceStepCounterState, setDeviceStepCounterState] = useState<DeviceStepCounterSyncState | null>(null);
+  const [stepSyncLoading, setStepSyncLoading] = useState(false);
+
+  async function refreshStepSyncState() {
+    setDeviceStepCounterState(await api.getDeviceStepCounterSyncStatus(session));
+  }
+
+  useEffect(() => {
+    if (kind !== "sync") {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadStepSyncState() {
+      if (cancelled) {
+        return;
+      }
+
+      setDeviceStepCounterState(await api.getDeviceStepCounterSyncStatus(session));
+    }
+
+    void loadStepSyncState().catch((error) => {
+      if (!isAuthExpiredError(error) && !cancelled) {
+        Alert.alert("无法读取同步状态", "请稍后再试。");
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [kind, session]);
+
+  async function handleConnectDeviceStepCounter() {
+    setStepSyncLoading(true);
+
+    try {
+      await api.connectDeviceStepCounter(session);
+      await refreshStepSyncState();
+    } catch (error) {
+      if (!isAuthExpiredError(error)) {
+        Alert.alert("启用失败", "请检查活动识别权限和设备计步传感器设置。");
+      }
+    } finally {
+      setStepSyncLoading(false);
+    }
+  }
+
+  async function handleSyncStepSources() {
+    setStepSyncLoading(true);
+
+    try {
+      await api.syncStepSources(session);
+      await refreshStepSyncState();
+    } catch (error) {
+      if (!isAuthExpiredError(error)) {
+        Alert.alert("同步失败", "请稍后重试，或检查设备计步权限与系统活动识别设置。");
+      }
+    } finally {
+      setStepSyncLoading(false);
+    }
+  }
+
   const content = getDetailContent({
     kind,
+    stepSyncLoading,
+    deviceStepCounterState,
     maskedIdentifier,
+    onConnectDeviceStepCounter: handleConnectDeviceStepCounter,
     onEditHealthProfile,
     onGoToAIChat,
     onLogout,
+    onOpenDeviceStepCounterSettings: () => api.openDeviceStepCounterSettings(),
     onRequestSignIn,
     profile,
     profileStatus,
     completion,
+    onSyncStepSources: handleSyncStepSources,
     session,
     updatedAt
   });
@@ -149,27 +219,77 @@ export function ProfileDetailScreen({
   );
 }
 
+function resolveDeviceStepCounterTone(state: DeviceStepCounterSyncState | null): StatusTone {
+  if (!state) {
+    return "neutral";
+  }
+  if (state.status === "ready") {
+    return "success";
+  }
+  if (state.status === "needs_permission" || !state.sensorAvailable) {
+    return "warning";
+  }
+  return "neutral";
+}
+
+function resolveDeviceStepCounterStatusLabel(state: DeviceStepCounterSyncState | null) {
+  if (!state) {
+    return "待检测";
+  }
+
+  if (!state.sensorAvailable) {
+    return "当前设备无步数传感器";
+  }
+
+  switch (state.status) {
+    case "ready":
+      return "设备计步已就绪";
+    case "needs_permission":
+      return "等待活动识别授权";
+    case "unsupported":
+      return "当前平台不支持";
+    case "error":
+      return "最近一次读取失败";
+    default:
+      return "待检测";
+  }
+}
+
+function formatSyncDateTime(value?: string | null, fallback = "尚未同步") {
+  return value ? formatDateTime(value) : fallback;
+}
+
 function getDetailContent({
   kind,
+  stepSyncLoading,
+  deviceStepCounterState,
   maskedIdentifier,
+  onConnectDeviceStepCounter,
   onEditHealthProfile,
   onGoToAIChat,
   onLogout,
+  onOpenDeviceStepCounterSettings,
   onRequestSignIn,
   profile,
   profileStatus,
+  onSyncStepSources,
   completion,
   session,
   updatedAt
 }: {
   kind: ProfileDetailKind;
+  stepSyncLoading: boolean;
+  deviceStepCounterState: DeviceStepCounterSyncState | null;
   maskedIdentifier: string;
+  onConnectDeviceStepCounter: () => void;
   onEditHealthProfile: () => void;
   onGoToAIChat: () => void;
   onLogout: () => Promise<void>;
+  onOpenDeviceStepCounterSettings: () => void;
   onRequestSignIn: () => void;
   profile: HealthProfile | null;
   profileStatus: { label: string; tone: StatusTone };
+  onSyncStepSources: () => void;
   completion: { filledCount: number; totalCount: number; percent: number };
   session: AuthSession | null;
   updatedAt: string;
@@ -311,34 +431,82 @@ function getDetailContent({
               variant: "primary" as const
             }
       };
-    case "sync":
+    case "sync": {
+      const deviceTone = resolveDeviceStepCounterTone(deviceStepCounterState);
+      const deviceStatusLabel = resolveDeviceStepCounterStatusLabel(deviceStepCounterState);
+      const shouldConnectDeviceStepCounter = Boolean(
+        deviceStepCounterState?.sensorAvailable && deviceStepCounterState.status === "needs_permission"
+      );
+      const hasReadyStepSource = deviceStepCounterState?.status === "ready";
+
+      const primarySyncAction = shouldConnectDeviceStepCounter
+        ? {
+            label: stepSyncLoading ? "启用中..." : "启用设备计步",
+            onPress: onConnectDeviceStepCounter,
+            variant: "primary" as const
+          }
+        : hasReadyStepSource
+          ? {
+              label: stepSyncLoading ? "同步中..." : "立即同步步数",
+              onPress: onSyncStepSources,
+              variant: "primary" as const
+            }
+          : {
+              label: "查看系统设置",
+              onPress: onOpenDeviceStepCounterSettings,
+              variant: "secondary" as const
+            };
+
+      const secondarySyncAction =
+        hasReadyStepSource || shouldConnectDeviceStepCounter
+          ? {
+              label: "打开系统设置",
+              onPress: onOpenDeviceStepCounterSettings,
+              variant: "secondary" as const
+            }
+          : undefined;
+
       return {
         badge: "同步状态",
-        tone: session ? ("success" as const) : ("warning" as const),
-        title: "数据同步状态",
-        description: "同步状态会影响你的健康档案是否能在专属账号空间持续保存。",
+        tone: deviceTone === "success" ? ("success" as const) : ("warning" as const),
+        title: "数据与步数同步",
+        description: "当前只保留设备传感器记步链路。首页和近 7 天趋势只展示真实同步到的步数，不再按运动时长估算。",
         sections: [
           {
-            title: "当前状态",
+            title: "账号与云端",
             rows: [
               { label: "同步结果", value: syncLabel, tone: session ? "success" : "warning" },
               { label: "最近更新", value: updatedAt },
               { label: "数据空间", value: session ? "云端账号空间" : "本机临时空间" }
             ]
+          },
+          {
+            title: "设备传感器",
+            description: "直接读取 Android Step Counter 传感器。首次启用后需要一段采样时间，系统才会逐步形成日步数基线。",
+            rows: [
+              { label: "当前状态", value: deviceStatusLabel, tone: deviceTone },
+              { label: "最近读取", value: formatSyncDateTime(deviceStepCounterState?.lastReadAt, "尚未读取") },
+              { label: "最近采样", value: formatSyncDateTime(deviceStepCounterState?.lastSampledAt, "尚无快照") },
+              { label: "最近入库", value: formatSyncDateTime(deviceStepCounterState?.lastSyncedAt, "尚未入库") },
+              { label: "同步天数", value: `${deviceStepCounterState?.syncedDays ?? 0} 天` },
+              {
+                label: "后台采样",
+                value:
+                  deviceStepCounterState?.backgroundSamplingEnabled
+                    ? `${deviceStepCounterState?.samplingIntervalMinutes ?? 15} 分钟/次`
+                    : "未启用"
+              },
+              { label: "数据来源", value: "Android Step Counter" },
+              { label: "设备", value: deviceStepCounterState?.sourceDevice ?? "跟随设备" },
+              { label: "时区", value: deviceStepCounterState?.sourceTimeZone ?? "跟随设备" },
+              { label: "最近异常", value: deviceStepCounterState?.lastError ?? "无" }
+            ]
           }
         ],
-        primaryAction: session
-          ? {
-              label: "编辑资料",
-              onPress: onEditHealthProfile,
-              variant: "primary" as const
-            }
-          : {
-              label: "登录 / 注册",
-              onPress: onRequestSignIn,
-              variant: "primary" as const
-            }
+        primaryAction: primarySyncAction,
+        secondaryAction: secondarySyncAction
       };
+    }
     case "recording":
       return {
         badge: "记录方式",

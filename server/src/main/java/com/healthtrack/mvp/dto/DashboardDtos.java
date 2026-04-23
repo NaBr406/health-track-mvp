@@ -16,6 +16,8 @@ public final class DashboardDtos {
             LocalDate date,
             Integer calories,
             Integer exerciseMinutes,
+            Integer steps,
+            String stepsSource,
             Integer careMinutes,
             Double glucoseMmol
     ) {
@@ -64,6 +66,7 @@ public final class DashboardDtos {
             Integer calories,
             Integer exerciseMinutes,
             Integer steps,
+            String stepsSource,
             Double sleepHours,
             Double glucoseMmol,
             String glucoseSource

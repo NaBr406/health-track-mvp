@@ -75,6 +75,7 @@ type GlucoseRiskTone = "safe" | "warning" | "danger";
 
 const DEFAULT_CALORIE_TARGET = 1700;
 const DEFAULT_EXERCISE_TARGET = 40;
+const DEFAULT_STEP_TARGET = 8000;
 const GLUCOSE_SAFE_LINE = "#42A08A";
 const GLUCOSE_SAFE_FILL = "rgba(66, 160, 138, 0.18)";
 const GLUCOSE_WARNING_LINE = "#D4A227";
@@ -483,6 +484,8 @@ function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: Hea
   const calorieTarget = resolveCalorieTarget(healthProfile);
   const calorieValue = getMetricNumber(snapshot, "calories");
   const exerciseValue = getMetricNumber(snapshot, "exercise");
+  const stepsValue = getMetricNumber(snapshot, "steps");
+  const stepsSource = findMetric(snapshot, "steps")?.source || "连接设备步数后自动同步";
   const glucoseChart = buildGlucoseChart(snapshot, now);
   const hasGlucoseData = glucoseChart.kind === "series";
   const hasForecast = hasGlucoseForecast(snapshot);
@@ -510,6 +513,17 @@ function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: Hea
       statusText: exerciseValue >= DEFAULT_EXERCISE_TARGET ? "已达到今日建议" : `还需 ${Math.max(Math.round(DEFAULT_EXERCISE_TARGET - exerciseValue), 0)} 分钟`,
       helperText: `目标 ${DEFAULT_EXERCISE_TARGET} 分钟`,
       progress: clamp(exerciseValue / DEFAULT_EXERCISE_TARGET)
+    },
+    {
+      id: "steps",
+      label: "步数",
+      descriptor: "全天活动",
+      iconName: "walk-outline",
+      valueText: formatMetricInteger(stepsValue),
+      unitText: "步",
+      statusText: stepsValue >= DEFAULT_STEP_TARGET ? "已达到今日建议" : `还需 ${Math.max(DEFAULT_STEP_TARGET - stepsValue, 0)} 步`,
+      helperText: stepsSource,
+      progress: clamp(stepsValue / DEFAULT_STEP_TARGET)
     },
     {
       id: "glucose",

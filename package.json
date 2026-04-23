@@ -1,0 +1,24 @@
+{
+  "name": "health-track-mvp",
+  "version": "1.0.0",
+  "description": "`生命卫士` 是一个面向健康管理场景的 monorepo，当前主交付为 Android 移动端和 Spring Boot 后端。项目把日常记录入口尽量收敛到聊天式界面：饮食、运动、睡眠、血糖等信息优先通过 `AI Chat` 录入，再由后端归档、刷新仪表盘，并生成每日建议。",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NaBr406/health-track-mvp.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/NaBr406/health-track-mvp/issues"
+  },
+  "homepage": "https://github.com/NaBr406/health-track-mvp#readme"
+}
