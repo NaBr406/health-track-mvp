@@ -1,12 +1,12 @@
-/**
+﻿/**
  * 档案主页，汇总账号状态、完善度和最近的健康洞察。
  */
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { OutlineButton } from "../../components/clinical";
-import { ProfileAvatar } from "../../components/ProfileAvatar";
+import { OutlineButton } from "../../../components/clinical";
+import { ProfileAvatar } from "../../../components/ProfileAvatar";
 import {
   getDisplayText,
   getMaskedAccountIdentifier,
@@ -15,13 +15,15 @@ import {
   getRiskSummary,
   hasValue,
   type StatusTone
-} from "../../lib/profilePresentation";
-import { api, isAuthExpiredError } from "../../lib/api";
-import { average, formatDateTime, formatDisplayDate } from "../../lib/utils";
-import { useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
-import { colors, fonts, layout, radii, shadows, spacing, typography } from "../../theme/tokens";
-import type { ProfileDetailKind } from "./profileDetailTypes";
-import type { AuthSession, ChatThread, DashboardSnapshot, HealthProfile } from "../../types";
+} from "../model/profilePresentation";
+import { chatApi } from "../../chat/api/chatApi";
+import { dashboardApi } from "../../dashboard/api/dashboardApi";
+import { isAuthExpiredError } from "../../../shared/api/client";
+import { average, formatDateTime, formatDisplayDate } from "../../../lib/utils";
+import { useImmersiveTabBarScroll } from "../../../navigation/ImmersiveTabBarContext";
+import { colors, fonts, layout, radii, shadows, spacing, typography } from "../../../theme/tokens";
+import type { ProfileDetailKind } from "../model/profileDetailTypes";
+import type { AuthSession, ChatThread, DashboardSnapshot, HealthProfile } from "../../../types";
 
 type ProfileScreenProps = {
   healthProfile: HealthProfile | null;
@@ -74,7 +76,7 @@ export function ProfileScreen({
     setLoading(true);
 
     try {
-      const [nextSnapshot, nextThread] = await Promise.all([api.getDashboardSnapshot(), api.getChatThread()]);
+      const [nextSnapshot, nextThread] = await Promise.all([dashboardApi.getDashboardSnapshot(), chatApi.getChatThread()]);
       setSnapshot(nextSnapshot);
       setThread(nextThread);
     } catch (error) {
@@ -992,3 +994,4 @@ const styles = StyleSheet.create({
     fontSize: typography.caption
   }
 });
+

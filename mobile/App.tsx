@@ -20,7 +20,8 @@ import {
   saveStoredSession,
   setStoredSessionInvalidationListener
 } from "./src/lib/auth";
-import { api, isAuthExpiredError } from "./src/lib/api";
+import { profileApi } from "./src/features/profile/api/profileApi";
+import { isAuthExpiredError } from "./src/shared/api/client";
 import { loadStoredHealthProfile } from "./src/lib/healthProfileStorage";
 import { loadOnboardingGatePassed, saveOnboardingGatePassed } from "./src/lib/onboardingGate";
 import { MainTabsNavigator } from "./src/navigation/MainTabsNavigator";
@@ -103,7 +104,7 @@ export default function App() {
       // 这样既能保证首屏打开足够快，也能在后台恢复成账号的最新状态。
       const storedSession = await loadStoredSession();
       const storedProfile = storedSession ? await loadStoredHealthProfile(storedSession) : null;
-      const resolvedProfile = storedSession ? await api.getHealthProfile(storedSession) : storedProfile;
+      const resolvedProfile = storedSession ? await profileApi.getHealthProfile(storedSession) : storedProfile;
       const onboardingGatePassed = storedSession ? await loadOnboardingGatePassed(storedSession) : false;
 
       setSession(storedSession);
@@ -123,7 +124,7 @@ export default function App() {
     // 登录完成后立刻刷新账号作用域下的档案和路由状态。
     // 这里会把游客态和账号态的数据空间切开，后续页面刷新也依赖这个切换结果。
     await saveStoredSession(nextSession);
-    const accountProfile = await api.getHealthProfile(nextSession);
+    const accountProfile = await profileApi.getHealthProfile(nextSession);
     const onboardingGatePassed = await loadOnboardingGatePassed(nextSession);
 
     setSession(nextSession);

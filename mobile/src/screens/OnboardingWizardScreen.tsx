@@ -8,7 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { InputField, OutlineButton } from "../components/clinical";
 import { ProfileAvatar } from "../components/ProfileAvatar";
 import { avatarPresets } from "../lib/avatarPresets";
-import { api } from "../lib/api";
+import { profileApi } from "../features/profile/api/profileApi";
 import { useScrollFocusedInputIntoView } from "../lib/useScrollFocusedInputIntoView";
 import { safeNumber, safeText } from "../lib/utils";
 import { colors, fonts, layout, radii, shadows, spacing, typography } from "../theme/tokens";
@@ -168,7 +168,7 @@ export function OnboardingWizardScreen({
 
     try {
       const now = new Date().toISOString();
-      const profile = await api.saveHealthProfile({
+      const profile = await profileApi.saveHealthProfile({
         email: initialProfile?.email,
         nickname: form.nickname.trim() || "健康用户",
         avatarPresetId: form.avatarPresetId,

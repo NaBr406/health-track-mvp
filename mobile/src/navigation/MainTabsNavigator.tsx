@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 主导航容器。
  *
  * 结构上采用“底部 Tab + 局部 Stack”的组合：
@@ -9,13 +9,13 @@
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { ClinicalTabBar } from "../components/ClinicalTabBar";
-import { AIChatScreen } from "../screens/app/AIChatScreen";
-import { AdjustmentDetailScreen } from "../screens/app/AdjustmentDetailScreen";
-import { DashboardScreen } from "../screens/app/DashboardScreen";
-import { ProfileDetailScreen } from "../screens/app/ProfileDetailScreen";
-import { ProfileScreen } from "../screens/app/ProfileScreen";
-import { ProfileSettingsScreen } from "../screens/app/ProfileSettingsScreen";
-import type { ProfileDetailKind } from "../screens/app/profileDetailTypes";
+import { AIChatScreen } from "../features/chat/screens/AIChatScreen";
+import { AdjustmentDetailScreen } from "../features/dashboard/screens/AdjustmentDetailScreen";
+import { DashboardScreen } from "../features/dashboard/screens/DashboardScreen";
+import { ProfileDetailScreen } from "../features/profile/screens/ProfileDetailScreen";
+import { ProfileScreen } from "../features/profile/screens/ProfileScreen";
+import { ProfileSettingsScreen } from "../features/profile/screens/ProfileSettingsScreen";
+import type { ProfileDetailKind } from "../features/profile/model/profileDetailTypes";
 import { colors } from "../theme/tokens";
 import type { AuthSession, DashboardSnapshot, HealthProfile } from "../types";
 import { ImmersiveTabBarProvider } from "./ImmersiveTabBarContext";
@@ -216,3 +216,4 @@ export function MainTabsNavigator({
     </ImmersiveTabBarProvider>
   );
 }
+

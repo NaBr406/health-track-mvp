@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+﻿import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
 import {
   Animated,
@@ -15,11 +15,12 @@ import {
   View
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { api, isAuthExpiredError } from "../../lib/api";
-import { formatTime, getTodayString } from "../../lib/utils";
-import { useImmersiveTabBarScroll } from "../../navigation/ImmersiveTabBarContext";
-import { borders, colors, layout, radii, spacing, typography } from "../../theme/tokens";
-import type { AuthSession, ChatMessage, ChatSendPayload, ChatSendResult, HealthProfile } from "../../types";
+import { chatApi } from "../api/chatApi";
+import { isAuthExpiredError } from "../../../shared/api/client";
+import { formatTime, getTodayString } from "../../../lib/utils";
+import { useImmersiveTabBarScroll } from "../../../navigation/ImmersiveTabBarContext";
+import { borders, colors, layout, radii, spacing, typography } from "../../../theme/tokens";
+import type { AuthSession, ChatMessage, ChatSendPayload, ChatSendResult, HealthProfile } from "../../../types";
 
 type AIChatScreenProps = {
   session: AuthSession | null;
@@ -248,7 +249,7 @@ export function AIChatScreen({
 
   async function loadThread() {
     try {
-      const thread = await api.getChatThread(getTodayString());
+      const thread = await chatApi.getChatThread(getTodayString());
       updateMessages(thread.messages.map(toUiMessage));
       setDataSource(thread.dataSource);
       scrollToBottom(false);
@@ -346,7 +347,7 @@ export function AIChatScreen({
     startLoadingFeedback(options.placeholderId, options.seed);
 
     try {
-      const result = await api.sendChatMessage(payload);
+      const result = await chatApi.sendChatMessage(payload);
       clearLoadingTimers();
 
       reconcileSuccessfulSend(result, options.userMessageId, options.placeholderId);
@@ -922,3 +923,4 @@ const styles = StyleSheet.create({
     opacity: 0.88
   }
 });
+

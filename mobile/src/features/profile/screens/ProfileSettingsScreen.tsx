@@ -1,13 +1,13 @@
-/**
+﻿/**
  * 轻量设置页，集中放置账号操作和档案相关快捷入口。
  */
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { OutlineButton } from "../../components/clinical";
-import { colors, fonts, layout, radii, shadows, spacing, typography } from "../../theme/tokens";
-import type { AuthSession } from "../../types";
-import type { ProfileDetailKind } from "./profileDetailTypes";
+import { OutlineButton } from "../../../components/clinical";
+import { colors, fonts, layout, radii, shadows, spacing, typography } from "../../../theme/tokens";
+import type { AuthSession } from "../../../types";
+import type { ProfileDetailKind } from "../model/profileDetailTypes";
 
 type ProfileSettingsScreenProps = {
   onBack: () => void;
@@ -235,3 +235,4 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs
   }
 });
+

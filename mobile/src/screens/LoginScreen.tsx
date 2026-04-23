@@ -4,7 +4,7 @@
 import { useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { InputField, OutlineButton, Panel, SectionHeader } from "../components/clinical";
-import { api } from "../lib/api";
+import { authApi } from "../features/auth/api/authApi";
 import { useScrollFocusedInputIntoView } from "../lib/useScrollFocusedInputIntoView";
 import { colors, layout, radii, spacing, typography } from "../theme/tokens";
 import type { AuthSession } from "../types";
@@ -32,8 +32,8 @@ export function LoginScreen({ onClose, onSignedIn }: LoginScreenProps) {
     try {
       const nextSession =
         mode === "login"
-          ? await api.login({ email, password })
-          : await api.register({ email, password, nickname });
+          ? await authApi.login({ email, password })
+          : await authApi.register({ email, password, nickname });
 
       await onSignedIn(nextSession);
     } catch (submitError) {

@@ -1,14 +1,14 @@
-/**
+﻿/**
  * 当前 AI 调整建议的详情页，用来展开解释预测依据和调整原因。
  */
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { MonoValue, Panel, SectionHeader } from "../../components/clinical";
-import { formatDateTime, formatDisplayDate } from "../../lib/utils";
-import type { DashboardStackParamList } from "../../navigation/MainTabsNavigator";
-import { borders, colors, layout, radii, spacing, typography } from "../../theme/tokens";
+import { MonoValue, Panel, SectionHeader } from "../../../components/clinical";
+import { formatDateTime, formatDisplayDate } from "../../../lib/utils";
+import type { DashboardStackParamList } from "../../../navigation/MainTabsNavigator";
+import { borders, colors, layout, radii, spacing, typography } from "../../../theme/tokens";
 
 type AdjustmentDetailScreenProps = NativeStackScreenProps<DashboardStackParamList, "AdjustmentDetail">;
 
@@ -154,3 +154,4 @@ const styles = StyleSheet.create({
   supportLabel: { color: colors.textSoft, fontSize: typography.caption, fontWeight: "600" },
   supportDescriptor: { color: colors.textMuted, fontSize: typography.body, lineHeight: 22 }
 });
+

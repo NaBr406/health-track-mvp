@@ -1,12 +1,13 @@
-/**
+﻿/**
  * 档案详情页，把已保存的健康信息整理成多个只读分区展示。
  */
 import { useEffect, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { OutlineButton } from "../../components/clinical";
-import { api, isAuthExpiredError } from "../../lib/api";
+import { OutlineButton } from "../../../components/clinical";
+import { deviceStepCounterApi } from "../../steps/api/deviceStepCounterApi";
+import { isAuthExpiredError } from "../../../shared/api/client";
 import {
   getDisplayText,
   getMaskedAccountIdentifier,
@@ -15,11 +16,11 @@ import {
   getRiskSummary,
   hasValue,
   type StatusTone
-} from "../../lib/profilePresentation";
-import { formatDateTime, formatDisplayDate } from "../../lib/utils";
-import { colors, fonts, layout, radii, shadows, spacing, typography } from "../../theme/tokens";
-import type { AuthSession, DeviceStepCounterSyncState, HealthProfile } from "../../types";
-import type { ProfileDetailKind } from "./profileDetailTypes";
+} from "../model/profilePresentation";
+import { formatDateTime, formatDisplayDate } from "../../../lib/utils";
+import { colors, fonts, layout, radii, shadows, spacing, typography } from "../../../theme/tokens";
+import type { AuthSession, DeviceStepCounterSyncState, HealthProfile } from "../../../types";
+import type { ProfileDetailKind } from "../model/profileDetailTypes";
 
 type ProfileDetailScreenProps = {
   kind: ProfileDetailKind;
@@ -74,7 +75,7 @@ export function ProfileDetailScreen({
   const [stepSyncLoading, setStepSyncLoading] = useState(false);
 
   async function refreshStepSyncState() {
-    setDeviceStepCounterState(await api.getDeviceStepCounterSyncStatus(session));
+    setDeviceStepCounterState(await deviceStepCounterApi.getDeviceStepCounterSyncStatus(session));
   }
 
   useEffect(() => {
@@ -89,7 +90,7 @@ export function ProfileDetailScreen({
         return;
       }
 
-      setDeviceStepCounterState(await api.getDeviceStepCounterSyncStatus(session));
+      setDeviceStepCounterState(await deviceStepCounterApi.getDeviceStepCounterSyncStatus(session));
     }
 
     void loadStepSyncState().catch((error) => {
@@ -107,7 +108,7 @@ export function ProfileDetailScreen({
     setStepSyncLoading(true);
 
     try {
-      await api.connectDeviceStepCounter(session);
+      await deviceStepCounterApi.connectDeviceStepCounter(session);
       await refreshStepSyncState();
     } catch (error) {
       if (!isAuthExpiredError(error)) {
@@ -122,7 +123,7 @@ export function ProfileDetailScreen({
     setStepSyncLoading(true);
 
     try {
-      await api.syncStepSources(session);
+      await deviceStepCounterApi.syncStepSources(session);
       await refreshStepSyncState();
     } catch (error) {
       if (!isAuthExpiredError(error)) {
@@ -142,7 +143,7 @@ export function ProfileDetailScreen({
     onEditHealthProfile,
     onGoToAIChat,
     onLogout,
-    onOpenDeviceStepCounterSettings: () => api.openDeviceStepCounterSettings(),
+    onOpenDeviceStepCounterSettings: () => deviceStepCounterApi.openDeviceStepCounterSettings(),
     onRequestSignIn,
     profile,
     profileStatus,
@@ -722,3 +723,4 @@ const styles = StyleSheet.create({
     gap: spacing.md
   }
 });
+
