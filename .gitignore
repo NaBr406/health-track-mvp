@@ -1,32 +1,46 @@
+# Environment
 /.env
-/server/target
-/web/
-/mobile/.expo
-/mobile/dist
-/mobile/node_modules
-/mobile/package-lock.json
 /mobile/.env
-.expo/
-.npm-cache/
-.m2/
-.vscode/
-.DS_Store
+/mobile/android/local.properties
+
+# Dependencies and tool caches
+/node_modules/
+/mobile/node_modules/
+/web/node_modules/
+/.npm-cache/
+/.m2/
+/server/.m2/
+/server/.mvn/dist/
+/mobile/.gradle-user-home/
+
+# Build output
+/server/target/
+/server/data/
+/mobile/.expo/
+/mobile/dist/
+/mobile/dist-check/
+/mobile/android/.gradle/
+/mobile/android/.cxx/
+/mobile/android/build/
+/mobile/android/app/build/
+/web/.next/
+/.expo/
+
+# Local IDE and OS files
 /.idea/
+/.vscode/
+.DS_Store
+
+# Local Android/emulator state
+/.android-home/
+/.android-user/
+/emulator-*.png
+
+# Debug captures and automation output
+/artifacts/
 /.codex-*
 /window-dump*.xml
 /*window-dump*.xml
-/.codex-*.log
-/.android-home/
-/.android-user/
-/mobile/android/.gradle
-/mobile/android/.cxx
-/mobile/android/app/build
-/mobile/.gradle-user-home/
-/mobile/android/local.properties
-/server/.mvn/dist/
-/server/data/
-/artifacts/android/*.apk
-/emulator-*.png
 /view.xml
 /mobile/.codex-metro*.log
 /mobile/window_dump*.xml
