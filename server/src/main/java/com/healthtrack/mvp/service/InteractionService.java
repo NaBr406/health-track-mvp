@@ -69,7 +69,7 @@ public class InteractionService {
     private final DifyRecordExtractorClient difyRecordExtractorClient;
 
     private final Map<String, CopyOnWriteArrayList<ChatMessageResponse>> threadStore = new ConcurrentHashMap<>();
-    private final Map<String, DayState> dayStateStore = new ConcurrentHashMap<>();
+    private final Map<String, InteractionDayState> dayStateStore = new ConcurrentHashMap<>();
     private final Map<String, String> feedbackStore = new ConcurrentHashMap<>();
 
     /**
@@ -162,7 +162,7 @@ public class InteractionService {
         DashboardSummaryResponse summary = dashboardService.getSummary(userId, date);
         DailyAdviceResponse advice = adviceService.getDailyAdvice(userId, date);
         UserProfile profile = userProfileRepository.findByUserId(userId).orElse(null);
-        DayState dayState = dayStateStore.computeIfAbsent(dayKey(userId, date), ignored -> new DayState());
+        InteractionDayState dayState = dayStateStore.computeIfAbsent(dayKey(userId, date), ignored -> new InteractionDayState());
         DailySummaryPoint focusSummaryPoint = summary.weeklyActivity().stream()
                 .filter(point -> Objects.equals(point.date(), date))
                 .findFirst()
@@ -273,7 +273,7 @@ public class InteractionService {
      */
     private List<String> persistInteraction(Long userId, LocalDate focusDate, String message, String inputMode, ParsedInteraction parsed) {
         User user = findUser(userId);
-        DayState state = dayStateStore.computeIfAbsent(dayKey(userId, focusDate), ignored -> new DayState());
+        InteractionDayState state = dayStateStore.computeIfAbsent(dayKey(userId, focusDate), ignored -> new InteractionDayState());
         List<String> changes = new ArrayList<>();
         boolean persisted = false;
 
@@ -282,10 +282,10 @@ public class InteractionService {
             DietRecord record = new DietRecord();
             record.setUser(user);
             record.setRecordedOn(focusDate);
-            record.setMealType(resolveMealType(parsed, message));
-            record.setFoodName(resolveFoodName(parsed, message));
+            record.setMealType(InteractionTextSupport.resolveMealType(parsed, message));
+            record.setFoodName(InteractionTextSupport.resolveFoodName(parsed, message));
             record.setCalories(parsed.calories());
-            record.setNote(trimToLength(message, 300));
+            record.setNote(InteractionTextSupport.trimToLength(message, 300));
             dietRecordRepository.save(record);
             changes.add("热量 " + parsed.calories() + " kcal");
             persisted = true;
@@ -300,11 +300,11 @@ public class InteractionService {
             ExerciseRecord record = new ExerciseRecord();
             record.setUser(user);
             record.setRecordedOn(focusDate);
-            record.setActivityName(resolveActivityName(parsed, message, parsed.steps()));
+            record.setActivityName(InteractionTextSupport.resolveActivityName(parsed, message, parsed.steps()));
             record.setDurationMinutes(exerciseMinutes);
             record.setCaloriesBurned(Math.max(0, exerciseMinutes * 4));
             record.setIntensity(parsed.steps() != null && parsed.exerciseMinutes() == null ? "低" : "中");
-            record.setNote(trimToLength(message, 300));
+            record.setNote(InteractionTextSupport.trimToLength(message, 300));
             exerciseRecordRepository.save(record);
             changes.add("运动 " + exerciseMinutes + " min");
             persisted = true;
@@ -341,7 +341,7 @@ public class InteractionService {
             record.setItemName("血糖记录");
             record.setDurationMinutes(0);
             record.setStatus("reported");
-            record.setNote(trimToLength(message, 300));
+            record.setNote(InteractionTextSupport.trimToLength(message, 300));
             record.setGlucoseMmol(parsed.glucoseMmol());
             careRecordRepository.save(record);
             changes.add("血糖 " + formatDecimal(parsed.glucoseMmol()) + " mmol/L");
@@ -357,7 +357,7 @@ public class InteractionService {
             record.setItemName("睡眠记录");
             record.setDurationMinutes((int) Math.round(parsed.sleepHours() * 60));
             record.setStatus("reported");
-            record.setNote(trimToLength(message, 300));
+            record.setNote(InteractionTextSupport.trimToLength(message, 300));
             careRecordRepository.save(record);
             changes.add("睡眠 " + formatDecimal(parsed.sleepHours()) + " h");
             persisted = true;
@@ -379,7 +379,7 @@ public class InteractionService {
             record.setItemName("voice".equals(inputMode) ? "语音描述" : "文本描述");
             record.setDurationMinutes(0);
             record.setStatus("reported");
-            record.setNote(trimToLength(message, 300));
+            record.setNote(InteractionTextSupport.trimToLength(message, 300));
             careRecordRepository.save(record);
         }
 
@@ -393,13 +393,13 @@ public class InteractionService {
      */
     private ParsedInteraction parseMessage(Long userId, LocalDate focusDate, String message) {
         UserProfile profile = userProfileRepository.findByUserId(userId).orElse(null);
-        DayState state = dayStateStore.computeIfAbsent(dayKey(userId, focusDate), ignored -> new DayState());
+        InteractionDayState state = dayStateStore.computeIfAbsent(dayKey(userId, focusDate), ignored -> new InteractionDayState());
         DifyRecordExtractorClient.ExtractorContext extractorContext = buildExtractorContext(userId, focusDate, state);
 
         return difyRecordExtractorClient.extract(userId, message, profile, extractorContext)
                 .filter(DifyRecordExtractorClient.RecordExtractionResult::hasStructuredData)
-                .map(this::toParsedInteraction)
-                .orElseGet(() -> parseMessageLocally(message));
+                .map(ParsedInteraction::fromExtractorResult)
+                .orElseGet(() -> InteractionTextSupport.parseMessageLocally(message));
     }
 
     /**
@@ -407,7 +407,7 @@ public class InteractionService {
      *
      * 这里会把当前已知血糖、预测状态和来源标签一起带上，方便模型做连续推断。
      */
-    private DifyRecordExtractorClient.ExtractorContext buildExtractorContext(Long userId, LocalDate focusDate, DayState state) {
+    private DifyRecordExtractorClient.ExtractorContext buildExtractorContext(Long userId, LocalDate focusDate, InteractionDayState state) {
         CurrentGlucoseContext currentGlucoseContext = resolveCurrentGlucoseContext(userId, focusDate, state);
         return new DifyRecordExtractorClient.ExtractorContext(
                 currentGlucoseContext.glucoseMmol(),
@@ -422,7 +422,7 @@ public class InteractionService {
         );
     }
 
-    private CurrentGlucoseContext resolveCurrentGlucoseContext(Long userId, LocalDate focusDate, DayState state) {
+    private CurrentGlucoseContext resolveCurrentGlucoseContext(Long userId, LocalDate focusDate, InteractionDayState state) {
         if (state.glucoseMmol() != null) {
             return new CurrentGlucoseContext(state.glucoseMmol(), "dialog_reported");
         }
@@ -446,7 +446,7 @@ public class InteractionService {
         return new CurrentGlucoseContext(null, null);
     }
 
-    private Double resolveForecastAnchorGlucose(DayState state) {
+    private Double resolveForecastAnchorGlucose(InteractionDayState state) {
         if (state.forecastAnchorGlucoseMmol() != null) {
             return state.forecastAnchorGlucoseMmol();
         }
@@ -462,43 +462,6 @@ public class InteractionService {
                 .orElse(state.glucoseForecast8h().get(0).predictedGlucoseMmol());
     }
 
-    private ParsedInteraction parseMessageLocally(String message) {
-        String normalized = message.toLowerCase(Locale.ROOT);
-        Integer steps = extractInt(message, "(\\d+)\\s*(?:步|steps?)");
-        Integer calories = extractInt(message, "(\\d+)\\s*(?:kcal|千卡|卡路里|卡)\\b");
-        Integer exerciseMinutes = containsAny(normalized, "走", "跑", "骑", "运动", "训练", "快走", "步行")
-                ? extractInt(message, "(\\d+)\\s*(?:分钟|分|min)\\b")
-                : null;
-        Double glucose = extractDouble(message, "血糖[^\\d]*(\\d+(?:\\.\\d+)?)");
-        Double sleepHours = containsAny(message, "睡", "睡眠", "入睡")
-                ? extractDouble(message, "(\\d+(?:\\.\\d+)?)\\s*(?:小时|h)\\b")
-                : null;
-
-        return new ParsedInteraction(calories, exerciseMinutes, steps, glucose, sleepHours, null, null, null, null, null, null, null, null, List.of(), null, null, null);
-    }
-
-    private ParsedInteraction toParsedInteraction(DifyRecordExtractorClient.RecordExtractionResult extracted) {
-        return new ParsedInteraction(
-                extracted.calories(),
-                extracted.exerciseMinutes(),
-                extracted.steps(),
-                extracted.glucoseMmol(),
-                extracted.sleepHours(),
-                extracted.mealType(),
-                extracted.foodName(),
-                extracted.activityName(),
-                extracted.glucoseRiskLevel(),
-                extracted.calibrationApplied(),
-                extracted.peakGlucoseMmol(),
-                extracted.peakHourOffset(),
-                extracted.returnToBaselineHourOffset(),
-                extracted.glucoseForecast8h(),
-                extracted.needsFollowup(),
-                extracted.followupQuestion(),
-                extracted.confidence()
-        );
-    }
-
     private AdjustmentModel resolveAdjustment(
             double glucose,
             int steps,
@@ -506,7 +469,7 @@ public class InteractionService {
             int calorieGap,
             DailyAdviceResponse advice,
             String feedback,
-            DayState dayState
+            InteractionDayState dayState
     ) {
         String title = calorieGap > 0 ? "压缩碳水负荷" : "补齐活动窗口";
         String parameterLabel = calorieGap > 0 ? "CHO" : "ACT";
@@ -557,19 +520,7 @@ public class InteractionService {
         return new AdjustmentModel(title, parameterLabel, parameterDelta, rationale, observation);
     }
 
-    private String resolveMealType(ParsedInteraction parsed, String message) {
-        return StringUtils.hasText(parsed.mealType()) ? parsed.mealType() : inferMealType(message);
-    }
-
-    private String resolveFoodName(ParsedInteraction parsed, String message) {
-        return StringUtils.hasText(parsed.foodName()) ? parsed.foodName() : inferFoodName(message);
-    }
-
-    private String resolveActivityName(ParsedInteraction parsed, String message, Integer steps) {
-        return StringUtils.hasText(parsed.activityName()) ? parsed.activityName() : inferActivityName(message, steps);
-    }
-
-    private double resolveDashboardGlucose(DayState dayState, Double recordedGlucose) {
+    private double resolveDashboardGlucose(InteractionDayState dayState, Double recordedGlucose) {
         if (dayState.glucoseMmol() != null) {
             return dayState.glucoseMmol();
         }
@@ -582,7 +533,7 @@ public class InteractionService {
         return DEFAULT_GLUCOSE;
     }
 
-    private double resolveDashboardGlucose(DayState dayState) {
+    private double resolveDashboardGlucose(InteractionDayState dayState) {
         if (dayState.glucoseMmol() != null) {
             return dayState.glucoseMmol();
         }
@@ -592,7 +543,7 @@ public class InteractionService {
         return DEFAULT_GLUCOSE;
     }
 
-    private String resolveGlucoseMetricDescriptor(DayState dayState, Double recordedGlucose) {
+    private String resolveGlucoseMetricDescriptor(InteractionDayState dayState, Double recordedGlucose) {
         if (recordedGlucose != null) {
             return "今日实测血糖";
         }
@@ -605,7 +556,7 @@ public class InteractionService {
         return "暂无实时回传，先展示默认基线";
     }
 
-    private String resolveGlucoseMetricSource(DayState dayState, Double recordedGlucose) {
+    private String resolveGlucoseMetricSource(InteractionDayState dayState, Double recordedGlucose) {
         if (recordedGlucose != null) {
             return "后端归档";
         }
@@ -618,7 +569,7 @@ public class InteractionService {
         return "默认基线";
     }
 
-    private int resolveDashboardSteps(DayState dayState, DailySummaryPoint point, Integer totalExerciseMinutes) {
+    private int resolveDashboardSteps(InteractionDayState dayState, DailySummaryPoint point, Integer totalExerciseMinutes) {
         int persistedSteps = point != null ? safeInt(point.steps()) : 0;
 
         if (dayState.steps() != null) {
@@ -627,7 +578,7 @@ public class InteractionService {
         return persistedSteps;
     }
 
-    private String resolveDashboardStepMetricSource(DayState dayState, DailySummaryPoint point, Integer totalExerciseMinutes) {
+    private String resolveDashboardStepMetricSource(InteractionDayState dayState, DailySummaryPoint point, Integer totalExerciseMinutes) {
         int persistedSteps = point != null ? safeInt(point.steps()) : 0;
 
         if (dayState.steps() != null && dayState.steps() > persistedSteps) {
@@ -642,7 +593,7 @@ public class InteractionService {
         return "连接设备步数后自动同步";
     }
 
-    private int resolveHistorySteps(DailySummaryPoint point, boolean focusPoint, DayState dayState) {
+    private int resolveHistorySteps(DailySummaryPoint point, boolean focusPoint, InteractionDayState dayState) {
         int persistedSteps = safeInt(point.steps());
 
         if (focusPoint && dayState.steps() != null) {
@@ -651,7 +602,7 @@ public class InteractionService {
         return persistedSteps;
     }
 
-    private String resolveHistoryStepSource(DailySummaryPoint point, boolean focusPoint, DayState dayState) {
+    private String resolveHistoryStepSource(DailySummaryPoint point, boolean focusPoint, InteractionDayState dayState) {
         int persistedSteps = safeInt(point.steps());
 
         if (focusPoint && dayState.steps() != null && dayState.steps() > persistedSteps) {
@@ -674,7 +625,7 @@ public class InteractionService {
         return normalized.contains("high") || normalized.contains("高");
     }
 
-    private String buildForecastObservation(DayState dayState, String fallback) {
+    private String buildForecastObservation(InteractionDayState dayState, String fallback) {
         List<String> fragments = new ArrayList<>();
 
         if (StringUtils.hasText(dayState.glucoseRiskLevel())) {
@@ -701,7 +652,7 @@ public class InteractionService {
         return String.join("，", fragments) + "。";
     }
 
-    private ForecastComputation buildFallbackForecast(ParsedInteraction parsed, DayState state, String message) {
+    private ForecastComputation buildFallbackForecast(ParsedInteraction parsed, InteractionDayState state, String message) {
         boolean hasMealSignal = parsed.calories() != null
                 || StringUtils.hasText(parsed.foodName())
                 || containsAny(message, "早餐", "早饭", "午餐", "午饭", "晚餐", "晚饭", "加餐", "零食", "米饭", "面", "面包", "水果", "香蕉", "奶茶", "蛋糕", "粥");
@@ -796,7 +747,7 @@ public class InteractionService {
         );
     }
 
-    private void applyForecastToState(DayState state, ForecastComputation forecast, String source) {
+    private void applyForecastToState(InteractionDayState state, ForecastComputation forecast, String source) {
         if (forecast == null) {
             return;
         }
@@ -889,16 +840,6 @@ public class InteractionService {
         return value == null ? 0 : value;
     }
 
-    private Integer extractInt(String source, String regex) {
-        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(regex, java.util.regex.Pattern.CASE_INSENSITIVE).matcher(source);
-        return matcher.find() ? Integer.parseInt(matcher.group(1)) : null;
-    }
-
-    private Double extractDouble(String source, String regex) {
-        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(regex, java.util.regex.Pattern.CASE_INSENSITIVE).matcher(source);
-        return matcher.find() ? Double.parseDouble(matcher.group(1)) : null;
-    }
-
     private boolean containsAny(String source, String... keywords) {
         for (String keyword : keywords) {
             if (source.contains(keyword)) {
@@ -906,53 +847,6 @@ public class InteractionService {
             }
         }
         return false;
-    }
-
-    private String inferMealType(String message) {
-        if (containsAny(message, "早餐", "早饭")) {
-            return "早餐";
-        }
-        if (containsAny(message, "午餐", "午饭")) {
-            return "午餐";
-        }
-        if (containsAny(message, "晚餐", "晚饭")) {
-            return "晚餐";
-        }
-        if (containsAny(message, "加餐", "零食")) {
-            return "加餐";
-        }
-        return "对话记录";
-    }
-
-    private String inferFoodName(String message) {
-        if (containsAny(message, "米饭")) {
-            return "米饭/主食描述";
-        }
-        if (containsAny(message, "面", "面包")) {
-            return "面食描述";
-        }
-        if (containsAny(message, "水果")) {
-            return "水果摄入";
-        }
-        return trimToLength(message, 40);
-    }
-
-    private String inferActivityName(String message, Integer steps) {
-        if (containsAny(message, "跑")) {
-            return "跑步";
-        }
-        if (containsAny(message, "骑")) {
-            return "骑行";
-        }
-        if (containsAny(message, "快走", "步行", "走") || steps != null) {
-            return "步行";
-        }
-        return "对话记录运动";
-    }
-
-    private String trimToLength(String value, int maxLength) {
-        String trimmed = value == null ? "" : value.trim();
-        return trimmed.length() <= maxLength ? trimmed : trimmed.substring(0, maxLength);
     }
 
     private String formatDecimal(double value) {
@@ -969,175 +863,6 @@ public class InteractionService {
     private int clampToFive(int multiplier, int min, int max) {
         int resolved = Math.max(min, Math.min(max, multiplier * 5));
         return Math.max(min, resolved);
-    }
-
-    private record ParsedInteraction(
-            Integer calories,
-            Integer exerciseMinutes,
-            Integer steps,
-            Double glucoseMmol,
-            Double sleepHours,
-            String mealType,
-            String foodName,
-            String activityName,
-            String glucoseRiskLevel,
-            Boolean calibrationApplied,
-            Double peakGlucoseMmol,
-            Double peakHourOffset,
-            Double returnToBaselineHourOffset,
-            List<DifyRecordExtractorClient.GlucoseForecastPoint> glucoseForecast8h,
-            Boolean needsFollowup,
-            String followupQuestion,
-            Double confidence
-    ) {
-        public boolean hasForecastData() {
-            return StringUtils.hasText(glucoseRiskLevel)
-                    || calibrationApplied != null
-                    || peakGlucoseMmol != null
-                    || peakHourOffset != null
-                    || returnToBaselineHourOffset != null
-                    || (glucoseForecast8h != null && !glucoseForecast8h.isEmpty());
-        }
-
-        public Double forecastAnchorGlucoseMmol() {
-            if (glucoseForecast8h == null || glucoseForecast8h.isEmpty()) {
-                return null;
-            }
-
-            return glucoseForecast8h.stream()
-                    .filter(point -> point.hourOffset() != null && point.hourOffset() == 0)
-                    .map(DifyRecordExtractorClient.GlucoseForecastPoint::predictedGlucoseMmol)
-                    .findFirst()
-                    .orElse(glucoseForecast8h.get(0).predictedGlucoseMmol());
-        }
-    }
-
-    private record AdjustmentModel(
-            String title,
-            String parameterLabel,
-            String parameterDelta,
-            String rationale,
-            String observation
-    ) {
-    }
-
-    private record ForecastComputation(
-            String glucoseRiskLevel,
-            Boolean calibrationApplied,
-            Double peakGlucoseMmol,
-            Double peakHourOffset,
-            Double returnToBaselineHourOffset,
-            List<DifyRecordExtractorClient.GlucoseForecastPoint> glucoseForecast8h,
-            Double forecastAnchorGlucoseMmol
-    ) {
-    }
-
-    private record CurrentGlucoseContext(
-            Double glucoseMmol,
-            String source
-    ) {
-    }
-
-    private static final class DayState {
-        private Integer steps;
-        private Double glucoseMmol;
-        private Double forecastAnchorGlucoseMmol;
-        private Double sleepHours;
-        private String glucoseRiskLevel;
-        private Boolean calibrationApplied;
-        private Double peakGlucoseMmol;
-        private Double peakHourOffset;
-        private Double returnToBaselineHourOffset;
-        private List<DifyRecordExtractorClient.GlucoseForecastPoint> glucoseForecast8h = List.of();
-        private String forecastSource;
-
-        public Integer steps() {
-            return steps;
-        }
-
-        public void setSteps(Integer steps) {
-            this.steps = steps;
-        }
-
-        public Double glucoseMmol() {
-            return glucoseMmol;
-        }
-
-        public void setGlucoseMmol(Double glucoseMmol) {
-            this.glucoseMmol = glucoseMmol;
-        }
-
-        public Double forecastAnchorGlucoseMmol() {
-            return forecastAnchorGlucoseMmol;
-        }
-
-        public void setForecastAnchorGlucoseMmol(Double forecastAnchorGlucoseMmol) {
-            this.forecastAnchorGlucoseMmol = forecastAnchorGlucoseMmol;
-        }
-
-        public Double sleepHours() {
-            return sleepHours;
-        }
-
-        public void setSleepHours(Double sleepHours) {
-            this.sleepHours = sleepHours;
-        }
-
-        public String glucoseRiskLevel() {
-            return glucoseRiskLevel;
-        }
-
-        public void setGlucoseRiskLevel(String glucoseRiskLevel) {
-            this.glucoseRiskLevel = glucoseRiskLevel;
-        }
-
-        public Boolean calibrationApplied() {
-            return calibrationApplied;
-        }
-
-        public void setCalibrationApplied(Boolean calibrationApplied) {
-            this.calibrationApplied = calibrationApplied;
-        }
-
-        public Double peakGlucoseMmol() {
-            return peakGlucoseMmol;
-        }
-
-        public void setPeakGlucoseMmol(Double peakGlucoseMmol) {
-            this.peakGlucoseMmol = peakGlucoseMmol;
-        }
-
-        public Double peakHourOffset() {
-            return peakHourOffset;
-        }
-
-        public void setPeakHourOffset(Double peakHourOffset) {
-            this.peakHourOffset = peakHourOffset;
-        }
-
-        public Double returnToBaselineHourOffset() {
-            return returnToBaselineHourOffset;
-        }
-
-        public void setReturnToBaselineHourOffset(Double returnToBaselineHourOffset) {
-            this.returnToBaselineHourOffset = returnToBaselineHourOffset;
-        }
-
-        public List<DifyRecordExtractorClient.GlucoseForecastPoint> glucoseForecast8h() {
-            return glucoseForecast8h;
-        }
-
-        public void setGlucoseForecast8h(List<DifyRecordExtractorClient.GlucoseForecastPoint> glucoseForecast8h) {
-            this.glucoseForecast8h = glucoseForecast8h == null ? List.of() : List.copyOf(glucoseForecast8h);
-        }
-
-        public String forecastSource() {
-            return forecastSource;
-        }
-
-        public void setForecastSource(String forecastSource) {
-            this.forecastSource = forecastSource;
-        }
     }
 
 }
