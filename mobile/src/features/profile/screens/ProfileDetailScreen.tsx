@@ -7,17 +7,8 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import { SafeAreaView } from "react-native-safe-area-context";
 import { OutlineButton } from "../../../components/clinical";
 import { deviceStepCounterApi } from "../../steps/api/deviceStepCounterApi";
+import { buildProfileDetailContent, buildProfileDetailIdentity, type DetailContent } from "../model/profileDetailContent";
 import { isAuthExpiredError } from "../../../shared/api/client";
-import {
-  getDisplayText,
-  getMaskedAccountIdentifier,
-  getProfileCompletion,
-  getProfileStatus,
-  getRiskSummary,
-  hasValue,
-  type StatusTone
-} from "../model/profilePresentation";
-import { formatDateTime, formatDisplayDate } from "../../../lib/utils";
 import { colors, fonts, layout, radii, shadows, spacing, typography } from "../../../theme/tokens";
 import type { AuthSession, DeviceStepCounterSyncState, HealthProfile } from "../../../types";
 import type { ProfileDetailKind } from "../model/profileDetailTypes";
@@ -33,28 +24,6 @@ type ProfileDetailScreenProps = {
   session: AuthSession | null;
 };
 
-type DetailSection = {
-  title: string;
-  description?: string;
-  rows: Array<{ label: string; value: string; tone?: StatusTone }>;
-};
-
-type DetailAction = {
-  label: string;
-  onPress: () => void;
-  variant: "primary" | "secondary" | "warning" | "ghost";
-};
-
-type DetailContent = {
-  badge: string;
-  tone: StatusTone;
-  title: string;
-  description: string;
-  sections: DetailSection[];
-  primaryAction?: DetailAction;
-  secondaryAction?: DetailAction;
-};
-
 export function ProfileDetailScreen({
   kind,
   healthProfile,
@@ -65,12 +34,7 @@ export function ProfileDetailScreen({
   onRequestSignIn,
   session
 }: ProfileDetailScreenProps) {
-  const profile = session ? healthProfile : null;
-  const completion = getProfileCompletion(profile);
-  const profileStatus = getProfileStatus(profile, session);
-  const maskedIdentifier = getMaskedAccountIdentifier(profile, session);
-  const updatedAt = profile?.updatedAt ? formatDisplayDate(profile.updatedAt.slice(0, 10)) : "暂无更新";
-
+  const identity = buildProfileDetailIdentity(healthProfile, session);
   const [deviceStepCounterState, setDeviceStepCounterState] = useState<DeviceStepCounterSyncState | null>(null);
   const [stepSyncLoading, setStepSyncLoading] = useState(false);
 
@@ -134,31 +98,28 @@ export function ProfileDetailScreen({
     }
   }
 
-  const content = getDetailContent({
+  const content: DetailContent = buildProfileDetailContent({
     kind,
     stepSyncLoading,
     deviceStepCounterState,
-    maskedIdentifier,
+    maskedIdentifier: identity.maskedIdentifier,
     onConnectDeviceStepCounter: handleConnectDeviceStepCounter,
     onEditHealthProfile,
     onGoToAIChat,
     onLogout,
     onOpenDeviceStepCounterSettings: () => deviceStepCounterApi.openDeviceStepCounterSettings(),
     onRequestSignIn,
-    profile,
-    profileStatus,
-    completion,
+    profile: identity.profile,
+    profileStatus: identity.profileStatus,
+    completion: identity.completion,
     onSyncStepSources: handleSyncStepSources,
     session,
-    updatedAt
+    updatedAt: identity.updatedAt
   });
 
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.headerCard}>
           <View style={styles.headerTopRow}>
             <Pressable accessibilityRole="button" onPress={onBack} style={({ pressed }) => [styles.backButton, pressed ? styles.pressed : null]}>
@@ -182,13 +143,7 @@ export function ProfileDetailScreen({
               {section.rows.map((row) => (
                 <View key={`${section.title}-${row.label}`} style={styles.detailRow}>
                   <Text style={styles.detailLabel}>{row.label}</Text>
-                  <Text
-                    numberOfLines={2}
-                    style={[
-                      styles.detailValue,
-                      row.tone ? detailValueToneStyles[row.tone] : null
-                    ]}
-                  >
+                  <Text numberOfLines={2} style={[styles.detailValue, row.tone ? detailValueToneStyles[row.tone] : null]}>
                     {row.value}
                   </Text>
                 </View>
@@ -199,399 +154,15 @@ export function ProfileDetailScreen({
 
         <View style={styles.footerActions}>
           {content.primaryAction ? (
-            <OutlineButton
-              fullWidth
-              label={content.primaryAction.label}
-              onPress={content.primaryAction.onPress}
-              variant={content.primaryAction.variant}
-            />
+            <OutlineButton fullWidth label={content.primaryAction.label} onPress={content.primaryAction.onPress} variant={content.primaryAction.variant} />
           ) : null}
           {content.secondaryAction ? (
-            <OutlineButton
-              fullWidth
-              label={content.secondaryAction.label}
-              onPress={content.secondaryAction.onPress}
-              variant={content.secondaryAction.variant}
-            />
+            <OutlineButton fullWidth label={content.secondaryAction.label} onPress={content.secondaryAction.onPress} variant={content.secondaryAction.variant} />
           ) : null}
         </View>
       </ScrollView>
     </SafeAreaView>
   );
-}
-
-function resolveDeviceStepCounterTone(state: DeviceStepCounterSyncState | null): StatusTone {
-  if (!state) {
-    return "neutral";
-  }
-  if (state.status === "ready") {
-    return "success";
-  }
-  if (state.status === "needs_permission" || !state.sensorAvailable) {
-    return "warning";
-  }
-  return "neutral";
-}
-
-function resolveDeviceStepCounterStatusLabel(state: DeviceStepCounterSyncState | null) {
-  if (!state) {
-    return "待检测";
-  }
-
-  if (!state.sensorAvailable) {
-    return "当前设备无步数传感器";
-  }
-
-  switch (state.status) {
-    case "ready":
-      return "设备计步已就绪";
-    case "needs_permission":
-      return "等待活动识别授权";
-    case "unsupported":
-      return "当前平台不支持";
-    case "error":
-      return "最近一次读取失败";
-    default:
-      return "待检测";
-  }
-}
-
-function formatSyncDateTime(value?: string | null, fallback = "尚未同步") {
-  return value ? formatDateTime(value) : fallback;
-}
-
-function getDetailContent({
-  kind,
-  stepSyncLoading,
-  deviceStepCounterState,
-  maskedIdentifier,
-  onConnectDeviceStepCounter,
-  onEditHealthProfile,
-  onGoToAIChat,
-  onLogout,
-  onOpenDeviceStepCounterSettings,
-  onRequestSignIn,
-  profile,
-  profileStatus,
-  onSyncStepSources,
-  completion,
-  session,
-  updatedAt
-}: {
-  kind: ProfileDetailKind;
-  stepSyncLoading: boolean;
-  deviceStepCounterState: DeviceStepCounterSyncState | null;
-  maskedIdentifier: string;
-  onConnectDeviceStepCounter: () => void;
-  onEditHealthProfile: () => void;
-  onGoToAIChat: () => void;
-  onLogout: () => Promise<void>;
-  onOpenDeviceStepCounterSettings: () => void;
-  onRequestSignIn: () => void;
-  profile: HealthProfile | null;
-  profileStatus: { label: string; tone: StatusTone };
-  onSyncStepSources: () => void;
-  completion: { filledCount: number; totalCount: number; percent: number };
-  session: AuthSession | null;
-  updatedAt: string;
-}): DetailContent {
-  const syncLabel = session ? "云端已同步" : "本机临时保存";
-  const riskSummary = getRiskSummary(profile);
-
-  switch (kind) {
-    case "health-profile":
-      return {
-        badge: "完整档案",
-        tone: "neutral" as const,
-        title: "完整健康档案",
-        description: "集中查看当前账号的核心建档信息，后续可随时返回编辑。",
-        sections: [
-          {
-            title: "基础信息",
-            rows: [
-              { label: "账号标识", value: maskedIdentifier },
-              { label: "档案状态", value: profileStatus.label, tone: profileStatus.tone },
-              { label: "资料完整度", value: `${completion.percent}%` },
-              { label: "最近更新", value: updatedAt }
-            ]
-          },
-          {
-            title: "健康摘要",
-            rows: [
-              { label: "当前目标", value: getDisplayText(profile?.primaryTarget) },
-              { label: "空腹血糖基线", value: getDisplayText(profile?.fastingGlucoseBaseline) },
-              { label: "血压基线", value: getDisplayText(profile?.bloodPressureBaseline) },
-              { label: "当前用药", value: getDisplayText(profile?.medicationPlan) },
-              { label: "照护重点", value: getDisplayText(profile?.careFocus) },
-              { label: "备注摘要", value: getDisplayText(profile?.notes) }
-            ]
-          }
-        ],
-        primaryAction: {
-          label: session ? "编辑资料" : "登录 / 注册",
-          onPress: session ? onEditHealthProfile : onRequestSignIn,
-          variant: "primary" as const
-        }
-      };
-    case "medication":
-      return {
-        badge: "用药管理",
-        tone: "neutral" as const,
-        title: "用药与照护",
-        description: "药物方案、照护重点和风险备注会一起展示，方便统一更新。",
-        sections: [
-          {
-            title: "当前方案",
-            rows: [
-              { label: "当前用药", value: getDisplayText(profile?.medicationPlan) },
-              { label: "照护重点", value: getDisplayText(profile?.careFocus) },
-              { label: "风险提醒", value: riskSummary ?? "暂未填写", tone: riskSummary ? "warning" : "neutral" }
-            ]
-          },
-          {
-            title: "记录建议",
-            description: "日常服药变化、症状感受和监测结果，建议直接通过 AI 对话补充。",
-            rows: [
-              { label: "更新入口", value: session ? "编辑资料" : "登录后可用" },
-              { label: "日常记录", value: "通过 AI 对话快速完成" }
-            ]
-          }
-        ],
-        primaryAction: {
-          label: session ? "编辑资料" : "登录 / 注册",
-          onPress: session ? onEditHealthProfile : onRequestSignIn,
-          variant: "primary" as const
-        },
-        secondaryAction: {
-          label: "去对话记录",
-          onPress: onGoToAIChat,
-          variant: "secondary" as const
-        }
-      };
-    case "privacy":
-      return {
-        badge: "数据与隐私",
-        tone: "neutral" as const,
-        title: "数据与隐私",
-        description: "当前版本优先保证数据边界清晰，登录后可使用专属账号空间。",
-        sections: [
-          {
-            title: "数据管理方式",
-            rows: [
-              { label: "数据同步状态", value: syncLabel, tone: session ? "success" : "warning" },
-              { label: "账号空间", value: session ? "专属账号空间" : "游客临时空间" },
-              { label: "账号标识", value: maskedIdentifier }
-            ]
-          },
-          {
-            title: "隐私说明",
-            rows: [
-              { label: "健康档案", value: session ? "按账号保存，便于跨设备同步" : "游客模式下仅保留本机体验" },
-              { label: "日常记录", value: "通过 AI 对话完成记录与归档" }
-            ]
-          }
-        ],
-        primaryAction: {
-          label: session ? "编辑资料" : "登录 / 注册",
-          onPress: session ? onEditHealthProfile : onRequestSignIn,
-          variant: "primary" as const
-        }
-      };
-    case "security":
-      return {
-        badge: "账号安全",
-        tone: session ? ("success" as const) : ("warning" as const),
-        title: "账号与安全",
-        description: "集中查看当前登录状态、账号标识和数据保存方式。",
-        sections: [
-          {
-            title: "账号信息",
-            rows: [
-              { label: "登录状态", value: session ? "已登录" : "游客身份", tone: session ? "success" : "warning" },
-              { label: "账号标识", value: maskedIdentifier },
-              { label: "数据同步状态", value: syncLabel, tone: session ? "success" : "warning" }
-            ]
-          },
-          {
-            title: "安全说明",
-            rows: [
-              { label: "资料管理", value: session ? "可编辑昵称、头像和健康基线" : "登录后可开启完整资料管理" },
-              { label: "切换方式", value: "通过登录页切换账号或重新登录" }
-            ]
-          }
-        ],
-        primaryAction: session
-          ? {
-              label: "退出登录",
-              onPress: () => void onLogout(),
-              variant: "secondary" as const
-            }
-          : {
-              label: "登录 / 注册",
-              onPress: onRequestSignIn,
-              variant: "primary" as const
-            }
-      };
-    case "sync": {
-      const deviceTone = resolveDeviceStepCounterTone(deviceStepCounterState);
-      const deviceStatusLabel = resolveDeviceStepCounterStatusLabel(deviceStepCounterState);
-      const shouldConnectDeviceStepCounter = Boolean(
-        deviceStepCounterState?.sensorAvailable && deviceStepCounterState.status === "needs_permission"
-      );
-      const hasReadyStepSource = deviceStepCounterState?.status === "ready";
-
-      const primarySyncAction = shouldConnectDeviceStepCounter
-        ? {
-            label: stepSyncLoading ? "启用中..." : "启用设备计步",
-            onPress: onConnectDeviceStepCounter,
-            variant: "primary" as const
-          }
-        : hasReadyStepSource
-          ? {
-              label: stepSyncLoading ? "同步中..." : "立即同步步数",
-              onPress: onSyncStepSources,
-              variant: "primary" as const
-            }
-          : {
-              label: "查看系统设置",
-              onPress: onOpenDeviceStepCounterSettings,
-              variant: "secondary" as const
-            };
-
-      const secondarySyncAction =
-        hasReadyStepSource || shouldConnectDeviceStepCounter
-          ? {
-              label: "打开系统设置",
-              onPress: onOpenDeviceStepCounterSettings,
-              variant: "secondary" as const
-            }
-          : undefined;
-
-      return {
-        badge: "同步状态",
-        tone: deviceTone === "success" ? ("success" as const) : ("warning" as const),
-        title: "数据与步数同步",
-        description: "当前只保留设备传感器记步链路。首页和近 7 天趋势只展示真实同步到的步数，不再按运动时长估算。",
-        sections: [
-          {
-            title: "账号与云端",
-            rows: [
-              { label: "同步结果", value: syncLabel, tone: session ? "success" : "warning" },
-              { label: "最近更新", value: updatedAt },
-              { label: "数据空间", value: session ? "云端账号空间" : "本机临时空间" }
-            ]
-          },
-          {
-            title: "设备传感器",
-            description: "直接读取 Android Step Counter 传感器。首次启用后需要一段采样时间，系统才会逐步形成日步数基线。",
-            rows: [
-              { label: "当前状态", value: deviceStatusLabel, tone: deviceTone },
-              { label: "最近读取", value: formatSyncDateTime(deviceStepCounterState?.lastReadAt, "尚未读取") },
-              { label: "最近采样", value: formatSyncDateTime(deviceStepCounterState?.lastSampledAt, "尚无快照") },
-              { label: "最近入库", value: formatSyncDateTime(deviceStepCounterState?.lastSyncedAt, "尚未入库") },
-              { label: "同步天数", value: `${deviceStepCounterState?.syncedDays ?? 0} 天` },
-              {
-                label: "后台采样",
-                value:
-                  deviceStepCounterState?.backgroundSamplingEnabled
-                    ? `${deviceStepCounterState?.samplingIntervalMinutes ?? 15} 分钟/次`
-                    : "未启用"
-              },
-              { label: "数据来源", value: "Android Step Counter" },
-              { label: "设备", value: deviceStepCounterState?.sourceDevice ?? "跟随设备" },
-              { label: "时区", value: deviceStepCounterState?.sourceTimeZone ?? "跟随设备" },
-              { label: "最近异常", value: deviceStepCounterState?.lastError ?? "无" }
-            ]
-          }
-        ],
-        primaryAction: primarySyncAction,
-        secondaryAction: secondarySyncAction
-      };
-    }
-    case "recording":
-      return {
-        badge: "记录方式",
-        tone: "neutral" as const,
-        title: "当前记录方式",
-        description: "日常记录通过 AI 对话完成，不需要再回到复杂表单里逐项填写。",
-        sections: [
-          {
-            title: "推荐记录内容",
-            rows: [
-              { label: "饮食与运动", value: "餐次、热量、步行或训练情况" },
-              { label: "监测数据", value: "血糖、血压、睡眠和身体感受" },
-              { label: "记录方式", value: "一句话描述即可开始归档" }
-            ]
-          }
-        ],
-        primaryAction: {
-          label: "去对话记录",
-          onPress: onGoToAIChat,
-          variant: "primary" as const
-        }
-      };
-    case "notifications":
-      return {
-        badge: "通知设置",
-        tone: "neutral" as const,
-        title: "通知设置",
-        description: "当前版本先保留设置入口，后续会补充更完整的提醒能力。",
-        sections: [
-          {
-            title: "当前状态",
-            rows: [
-              { label: "通知能力", value: "即将开放" },
-              { label: "提醒方式", value: "后续支持按记录节奏和健康计划提醒" }
-            ]
-          }
-        ]
-      };
-    case "about":
-      return {
-        badge: "关于我们",
-        tone: "neutral" as const,
-        title: "关于生命卫士",
-        description: "这是一个以对话记录为核心的健康管理 MVP，聚焦轻量建档与连续记录。",
-        sections: [
-          {
-            title: "产品说明",
-            rows: [
-              { label: "核心体验", value: "档案建线 + AI 对话记录" },
-              { label: "日常记录", value: "通过 AI 对话快速完成" },
-              { label: "当前版本", value: "移动端 MVP" }
-            ]
-          }
-        ]
-      };
-    case "help":
-    default:
-      return {
-        badge: "帮助与反馈",
-        tone: "neutral" as const,
-        title: "帮助与反馈",
-        description: "如果你不确定从哪里开始，可以先完善档案，再通过 AI 对话记录每天状态。",
-        sections: [
-          {
-            title: "使用建议",
-            rows: [
-              { label: "第一步", value: hasValue(profile?.nickname) ? "查看或完善健康档案" : "先完成基础建档" },
-              { label: "第二步", value: "通过 AI 对话记录饮食、运动和监测数据" },
-              { label: "第三步", value: "回到“我的”页面查看近 7 天趋势" }
-            ]
-          }
-        ],
-        primaryAction: {
-          label: session ? "编辑资料" : "登录 / 注册",
-          onPress: session ? onEditHealthProfile : onRequestSignIn,
-          variant: "primary" as const
-        },
-        secondaryAction: {
-          label: "去对话记录",
-          onPress: onGoToAIChat,
-          variant: "secondary" as const
-        }
-      };
-  }
 }
 
 const toneBadgeStyles = StyleSheet.create({
@@ -723,4 +294,3 @@ const styles = StyleSheet.create({
     gap: spacing.md
   }
 });
-

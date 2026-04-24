@@ -26,7 +26,7 @@ import { loadStoredHealthProfile } from "./src/lib/healthProfileStorage";
 import { loadOnboardingGatePassed, saveOnboardingGatePassed } from "./src/lib/onboardingGate";
 import { MainTabsNavigator } from "./src/navigation/MainTabsNavigator";
 import { LoginScreen } from "./src/screens/LoginScreen";
-import { OnboardingWizardScreen } from "./src/screens/OnboardingWizardScreen";
+import { OnboardingWizardScreen } from "./src/features/onboarding/screens/OnboardingWizardScreen";
 import { borders, colors, radii, shadows, spacing, typography } from "./src/theme/tokens";
 import type { AuthSession, HealthProfile } from "./src/types";
 
