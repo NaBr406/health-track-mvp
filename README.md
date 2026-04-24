@@ -6,9 +6,10 @@
 
 - 主交付为 `mobile/` Android App 和 `server/` API 服务，`web/` 为历史原型目录，当前不维护
 - 支持登录、注册和游客模式；游客态与登录态使用独立的数据作用域
-- Dashboard 会展示今日 AI 建议、热量/运动概览、血糖趋势和 8 小时预测
+- Dashboard 会展示今日 AI 建议、热量/运动概览、真实步数、血糖趋势和 8 小时预测
 - `AI Chat` 是统一记录入口，文本发送可用；语音按钮已预留，但当前仍走文本提交通道
 - 后端会把聊天内容解析为饮食、运动、护理、睡眠和血糖记录，并刷新当天建议
+- 当前已经接通的步数链路是 Android 设备步数传感器；Health Connect 相关依赖已预埋，但还不是当前 UI 的主同步入口
 - Dify 当前主要用于两类能力：每日 AI 建议、聊天记录结构化抽取；未配置时会自动回退到本地 mock/规则逻辑
 
 ## 仓库结构
@@ -24,6 +25,53 @@
 `-- README.md
 ```
 
+## 移动端目录约定
+
+移动端代码现在按 feature 收敛，页面文件尽量只负责“状态编排 + 页面组合”，把展示组件、模型推导和交互 hook 拆回各自目录。
+
+```text
+mobile/src/
+|-- components/            跨 feature 复用组件
+|-- features/
+|   |-- auth/
+|   |-- chat/
+|   |   |-- api/
+|   |   |-- components/
+|   |   |-- hooks/
+|   |   |-- model/
+|   |   `-- screens/
+|   |-- dashboard/
+|   |   |-- api/
+|   |   |-- components/
+|   |   |-- model/
+|   |   `-- screens/
+|   |-- onboarding/
+|   |   |-- components/
+|   |   |-- model/
+|   |   `-- screens/
+|   |-- profile/
+|   |   |-- api/
+|   |   |-- components/
+|   |   |-- model/
+|   |   `-- screens/
+|   `-- steps/
+|       `-- api/
+|-- lib/                   设备能力、本地存储、mock 与通用工具
+|-- navigation/            导航与沉浸式 tab bar 行为
+|-- screens/               仍保留的跨 feature 入口页（如登录）
+|-- shared/api/            通用 API client / identity 能力
+|-- theme/                 Design tokens
+`-- types.ts               全局业务类型
+```
+
+当前几个主要 feature 的推荐职责边界：
+
+- `api/`: 只放接口调用和协议适配
+- `components/`: 只放展示组件，不直接持有页面级副作用
+- `hooks/`: 放页面行为、键盘联动、提交流程等交互状态
+- `model/`: 放纯函数、派生数据、UI metadata 组装
+- `screens/`: 保留路由入口和顶层编排
+
 ## 技术栈
 
 ### Mobile
@@ -34,7 +82,10 @@
 - TypeScript
 - React Navigation
 - AsyncStorage
+- `expo-build-properties`
+- `expo-health-connect`
 - `expo-image-picker`
+- `react-native-health-connect`
 - `react-native-svg`
 
 ### Server
@@ -57,9 +108,10 @@
   - 支持昵称、头像、健康状态、目标、基线指标、用药与护理重点编辑
 - `Dashboard`
   - 今日 AI 建议卡片
-  - 热量与运动概览
+  - 热量、运动、步数概览
   - 血糖历史趋势与 8 小时预测
   - 建议详情与反馈
+  - 设备步数的本地实时更新与已登录账号的延迟同步
 - `AI Chat`
   - 统一自然语言记录入口
   - 发送后会触发后端归档和建议刷新
@@ -67,6 +119,11 @@
 - `Profile`
   - 基础健康档案查看与编辑
   - 资料详情页、设置页、退出登录
+  - 数据与步数同步状态查看
+- `Device Step Sync`
+  - 当前基于 Android `Step Counter` 传感器
+  - 首次授权后支持步数读取、手动同步和 Dashboard 实时刷新
+  - 后台通过 WorkManager 按 15 分钟间隔采样，登录后可同步到服务端
 - `Fallback`
   - 后端不可用时自动回退本地 mock 数据
   - 游客态记录和登录态记录彼此隔离
@@ -81,9 +138,27 @@
 - `/api/advice/daily` 每日建议
 - `/api/records/diet`
 - `/api/records/exercise`
+- `/api/records/steps`
+- `/api/records/steps/sync`
 - `/api/records/care`
 - Swagger UI: `http://localhost:8080/swagger-ui.html`
 - OpenAPI JSON: `http://localhost:8080/v3/api-docs`
+
+## 步数同步说明
+
+当前项目里与步数相关的能力分成两层：
+
+1. 已上线链路
+   - Android 设备步数传感器
+   - 首次开启后申请 `ACTIVITY_RECOGNITION` 权限
+   - Dashboard 会订阅实时步数更新
+   - 登录态会把步数写入后端 `step_records`
+   - 游客态只保留本地显示，不写入服务器
+2. 预埋但未作为主入口的能力
+   - Health Connect 依赖与权限
+   - 当前尚未在设置页开放完整的 Health Connect 配置流程
+
+如果设备或模拟器没有 `stepcounter` / `stepdetector` 传感器，应用仍可运行，但步数同步会显示为不可用。
 
 ## 快速开始
 
@@ -94,6 +169,7 @@
 - Node.js 与 npm
 - Java 17
 - Android SDK
+- Android 8.0+ 模拟器或真机
 - 一个名为 `HealthTrack_Pixel_35` 的 Android Emulator
 - PowerShell
 
@@ -193,6 +269,12 @@ cd mobile
 npm run start:dev-client
 ```
 
+首次在设备中使用步数同步时，还需要：
+
+- 在 App 内开启“设备计步”
+- 授予 `ACTIVITY_RECOGNITION` 权限
+- 等待一段采样时间，设备步数基线才会逐渐稳定
+
 ## Docker Compose
 
 `docker-compose.yml` 当前会启动：
@@ -219,7 +301,7 @@ docker compose up --build
 - 邮箱：`demo@healthtrack.local`
 - 密码：`Demo123456!`
 
-这个逻辑位于 [SeedDataInitializer.java](d:/githubs/health-track-mvp/server/src/main/java/com/healthtrack/mvp/config/SeedDataInitializer.java)。
+这个逻辑位于 [server/src/main/java/com/healthtrack/mvp/config/SeedDataInitializer.java](server/src/main/java/com/healthtrack/mvp/config/SeedDataInitializer.java)。
 
 ## 环境变量
 
@@ -264,6 +346,17 @@ Dify 记录抽取：
 
 - `EXPO_PUBLIC_API_BASE_URL`
 
+## Android 与权限要求
+
+- 当前移动端为 Android-only
+- `mobile/app.json` 已将 Android `minSdkVersion` 配置为 `26`
+- Manifest 已声明：
+  - `android.permission.ACTIVITY_RECOGNITION`
+  - `android.permission.health.READ_STEPS`
+  - `android.hardware.sensor.stepcounter`
+  - `android.hardware.sensor.stepdetector`
+- Health Connect 权限当前主要用于后续扩展，现阶段主流程还是设备传感器计步
+
 ## Android APK 打包
 
 ### 通用 Release APK
@@ -286,17 +379,19 @@ cd mobile\android
 .\gradlew.bat assembleRelease '-PreactNativeArchitectures=arm64-v8a' '-Pandroid.enableMinifyInReleaseBuilds=true' '-Pandroid.enableShrinkResourcesInReleaseBuilds=true'
 ```
 
-> 当前 `release` 仍使用 debug keystore 签名，只适合内部验证；如果要正式分发，需要先修改 [build.gradle](d:/githubs/health-track-mvp/mobile/android/app/build.gradle) 中的签名配置。
+> 当前 `release` 仍使用 debug keystore 签名，只适合内部验证；如果要正式分发，需要先修改 [mobile/android/app/build.gradle](mobile/android/app/build.gradle) 中的签名配置。
 
 ## 已知限制
 
 - `AI Chat` 目前是“聊天外观 + 业务归档入口”，还不是完整的 Dify 多轮对话
 - 语音按钮当前仅保留入口，尚未接入录音与转写
-- `web/` 目录不是当前主交付面
+- 步数同步当前主链路仅使用 Android `Step Counter` 传感器，Health Connect UI 仍未开放
+- 部分模拟器和设备没有步数传感器时，计步能力不可用
 - `dev-mobile.ps1` 对本地 Android 模拟器名称有硬编码依赖
+- `web/` 目录不是当前主交付面
 
 ## 相关文档
 
-- [docs/dify-integration-guide.md](d:/githubs/health-track-mvp/docs/dify-integration-guide.md)
-- [docs/dify-chatflow-tool-routing-guide.md](d:/githubs/health-track-mvp/docs/dify-chatflow-tool-routing-guide.md)
-- [mobile/README.md](d:/githubs/health-track-mvp/mobile/README.md)
+- [docs/dify-integration-guide.md](docs/dify-integration-guide.md)
+- [docs/dify-chatflow-tool-routing-guide.md](docs/dify-chatflow-tool-routing-guide.md)
+- [mobile/README.md](mobile/README.md)
