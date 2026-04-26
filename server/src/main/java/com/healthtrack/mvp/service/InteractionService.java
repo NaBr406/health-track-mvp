@@ -24,8 +24,14 @@ import com.healthtrack.mvp.repository.DietRecordRepository;
 import com.healthtrack.mvp.repository.ExerciseRecordRepository;
 import com.healthtrack.mvp.repository.UserProfileRepository;
 import com.healthtrack.mvp.repository.UserRepository;
+import java.time.DateTimeException;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -34,6 +40,8 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -58,6 +66,8 @@ public class InteractionService {
     private static final String DATA_SOURCE = "server";
     private static final double DEFAULT_SLEEP_HOURS = 6.5;
     private static final double DEFAULT_GLUCOSE = 7.2;
+    private static final List<Integer> REQUIRED_FORECAST_HOUR_OFFSETS = List.of(0, 1, 2, 4, 6, 8);
+    private static final Pattern GLUCOSE_NUMBER_PATTERN = Pattern.compile("(\\d+(?:\\.\\d+)?)");
 
     private final UserRepository userRepository;
     private final UserProfileRepository userProfileRepository;
@@ -90,7 +100,8 @@ public class InteractionService {
      */
     @Transactional
     public InteractionMessageResponse sendMessage(Long userId, InteractionMessageRequest request) {
-        LocalDate focusDate = resolveDate(request.focusDate());
+        UserTimeContext userTimeContext = resolveUserTimeContext(request.timeZone());
+        LocalDate focusDate = resolveDate(request.focusDate(), userTimeContext);
         String message = request.message() == null ? "" : request.message().trim();
 
         if (message.isEmpty()) {
@@ -101,8 +112,8 @@ public class InteractionService {
         CopyOnWriteArrayList<ChatMessageResponse> thread = ensureThread(userId, focusDate);
         thread.add(newMessage("user", message));
 
-        ParsedInteraction parsed = parseMessage(userId, focusDate, message);
-        List<String> changes = persistInteraction(userId, focusDate, message, inputMode, parsed);
+        ParsedInteraction parsed = parseMessage(userId, focusDate, message, userTimeContext);
+        List<String> changes = persistInteraction(userId, focusDate, message, inputMode, parsed, userTimeContext);
         adviceService.refreshDailyAdvice(userId, focusDate);
         DashboardSnapshotResponse snapshot = getDashboardSnapshot(userId, focusDate);
 
@@ -271,7 +282,14 @@ public class InteractionService {
      *
      * 返回值是本次消息实际造成的“变化摘要”，供助手回复直接复述给用户。
      */
-    private List<String> persistInteraction(Long userId, LocalDate focusDate, String message, String inputMode, ParsedInteraction parsed) {
+    private List<String> persistInteraction(
+            Long userId,
+            LocalDate focusDate,
+            String message,
+            String inputMode,
+            ParsedInteraction parsed,
+            UserTimeContext userTimeContext
+    ) {
         User user = findUser(userId);
         InteractionDayState state = dayStateStore.computeIfAbsent(dayKey(userId, focusDate), ignored -> new InteractionDayState());
         List<String> changes = new ArrayList<>();
@@ -364,7 +382,13 @@ public class InteractionService {
         }
 
         if (!parsed.hasForecastData()) {
-            ForecastComputation fallbackForecast = buildFallbackForecast(parsed, state, message);
+            ForecastComputation fallbackForecast = buildFallbackForecast(
+                    parsed,
+                    state,
+                    message,
+                    userTimeContext,
+                    userProfileRepository.findByUserId(userId).orElse(null)
+            );
             if (fallbackForecast != null) {
                 applyForecastToState(state, fallbackForecast, "local");
                 changes.add(Boolean.TRUE.equals(fallbackForecast.calibrationApplied()) ? "血糖预测校准" : "8 小时血糖预测");
@@ -391,10 +415,10 @@ public class InteractionService {
      *
      * 优先走 Dify 抽取器；只有在没有抽到结构化结果时，才退回本地规则解析。
      */
-    private ParsedInteraction parseMessage(Long userId, LocalDate focusDate, String message) {
+    private ParsedInteraction parseMessage(Long userId, LocalDate focusDate, String message, UserTimeContext userTimeContext) {
         UserProfile profile = userProfileRepository.findByUserId(userId).orElse(null);
         InteractionDayState state = dayStateStore.computeIfAbsent(dayKey(userId, focusDate), ignored -> new InteractionDayState());
-        DifyRecordExtractorClient.ExtractorContext extractorContext = buildExtractorContext(userId, focusDate, state);
+        DifyRecordExtractorClient.ExtractorContext extractorContext = buildExtractorContext(userId, focusDate, state, userTimeContext, profile);
 
         return difyRecordExtractorClient.extract(userId, message, profile, extractorContext)
                 .filter(DifyRecordExtractorClient.RecordExtractionResult::hasStructuredData)
@@ -407,11 +431,37 @@ public class InteractionService {
      *
      * 这里会把当前已知血糖、预测状态和来源标签一起带上，方便模型做连续推断。
      */
-    private DifyRecordExtractorClient.ExtractorContext buildExtractorContext(Long userId, LocalDate focusDate, InteractionDayState state) {
-        CurrentGlucoseContext currentGlucoseContext = resolveCurrentGlucoseContext(userId, focusDate, state);
+    private DifyRecordExtractorClient.ExtractorContext buildExtractorContext(
+            Long userId,
+            LocalDate focusDate,
+            InteractionDayState state,
+            UserTimeContext userTimeContext,
+            UserProfile profile
+    ) {
+        ActiveGlucoseForecastContext activeForecastContext = resolveActiveGlucoseForecastContext(state, userTimeContext);
+        CurrentGlucoseContext predictionBaselineContext = resolvePredictionBaselineGlucoseContext(
+                userId,
+                focusDate,
+                state,
+                activeForecastContext,
+                profile
+        );
         return new DifyRecordExtractorClient.ExtractorContext(
-                currentGlucoseContext.glucoseMmol(),
-                currentGlucoseContext.source(),
+                userTimeContext.timeZone(),
+                userTimeContext.currentDate(),
+                userTimeContext.currentTime(),
+                userTimeContext.currentDateTime(),
+                userTimeContext.utcOffset(),
+                predictionBaselineContext.glucoseMmol(),
+                predictionBaselineContext.source(),
+                DEFAULT_GLUCOSE,
+                predictionBaselineContext.glucoseMmol(),
+                predictionBaselineContext.source(),
+                activeForecastContext.currentGlucoseMmol(),
+                activeForecastContext.currentHourOffset(),
+                activeForecastContext.valid(),
+                activeForecastContext.startedAt(),
+                activeForecastContext.expiresAt(),
                 state.glucoseRiskLevel(),
                 state.calibrationApplied(),
                 state.peakGlucoseMmol(),
@@ -422,7 +472,17 @@ public class InteractionService {
         );
     }
 
-    private CurrentGlucoseContext resolveCurrentGlucoseContext(Long userId, LocalDate focusDate, InteractionDayState state) {
+    private CurrentGlucoseContext resolvePredictionBaselineGlucoseContext(
+            Long userId,
+            LocalDate focusDate,
+            InteractionDayState state,
+            ActiveGlucoseForecastContext activeForecastContext,
+            UserProfile profile
+    ) {
+        if (Boolean.TRUE.equals(activeForecastContext.valid()) && activeForecastContext.currentGlucoseMmol() != null) {
+            return new CurrentGlucoseContext(activeForecastContext.currentGlucoseMmol(), "active_forecast_current");
+        }
+
         if (state.glucoseMmol() != null) {
             return new CurrentGlucoseContext(state.glucoseMmol(), "dialog_reported");
         }
@@ -438,12 +498,102 @@ public class InteractionService {
             return new CurrentGlucoseContext(recordedGlucose, "care_record");
         }
 
-        Double forecastAnchorGlucose = resolveForecastAnchorGlucose(state);
-        if (forecastAnchorGlucose != null) {
-            return new CurrentGlucoseContext(forecastAnchorGlucose, "forecast_anchor");
+        Double profileBaselineGlucose = resolveProfileBaselineGlucose(profile);
+        if (profileBaselineGlucose != null) {
+            return new CurrentGlucoseContext(profileBaselineGlucose, "profile_fasting_baseline");
         }
 
-        return new CurrentGlucoseContext(null, null);
+        return new CurrentGlucoseContext(DEFAULT_GLUCOSE, "default_baseline");
+    }
+
+    private Double resolveProfileBaselineGlucose(UserProfile profile) {
+        if (profile == null || !StringUtils.hasText(profile.getFastingGlucoseBaseline())) {
+            return null;
+        }
+
+        String baseline = profile.getFastingGlucoseBaseline().trim();
+        Matcher matcher = GLUCOSE_NUMBER_PATTERN.matcher(baseline);
+        if (!matcher.find()) {
+            return null;
+        }
+
+        try {
+            double parsed = Double.parseDouble(matcher.group(1));
+            String normalized = baseline.toLowerCase(Locale.ROOT);
+            if (normalized.contains("mg") || parsed > 30d) {
+                parsed = parsed / 18d;
+            }
+            if (parsed < 2.5d || parsed > 25d) {
+                return null;
+            }
+            return roundOneDecimal(parsed);
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private ActiveGlucoseForecastContext resolveActiveGlucoseForecastContext(
+            InteractionDayState state,
+            UserTimeContext userTimeContext
+    ) {
+        if (state.forecastGeneratedAt() == null || state.glucoseForecast8h().isEmpty()) {
+            return ActiveGlucoseForecastContext.empty();
+        }
+
+        String startedAt = formatInstantForUser(state.forecastGeneratedAt(), userTimeContext);
+        String expiresAt = formatInstantForUser(state.forecastGeneratedAt().plus(Duration.ofHours(8)), userTimeContext);
+        double elapsedHours = Duration.between(state.forecastGeneratedAt(), userTimeContext.currentInstant()).toMillis() / 3_600_000d;
+
+        if (elapsedHours < -0.05d || elapsedHours > 8d) {
+            return new ActiveGlucoseForecastContext(null, null, false, startedAt, expiresAt);
+        }
+
+        double currentHourOffset = clampDouble(elapsedHours, 0d, 8d);
+        Double currentGlucose = interpolateForecastGlucoseAt(state.glucoseForecast8h(), currentHourOffset);
+        return new ActiveGlucoseForecastContext(
+                currentGlucose == null ? null : roundOneDecimal(currentGlucose),
+                roundTwoDecimal(currentHourOffset),
+                currentGlucose != null,
+                startedAt,
+                expiresAt
+        );
+    }
+
+    private Double interpolateForecastGlucoseAt(
+            List<DifyRecordExtractorClient.GlucoseForecastPoint> forecast,
+            double hourOffset
+    ) {
+        List<DifyRecordExtractorClient.GlucoseForecastPoint> points = forecast.stream()
+                .filter(point -> point.hourOffset() != null && point.predictedGlucoseMmol() != null)
+                .sorted((left, right) -> left.hourOffset().compareTo(right.hourOffset()))
+                .toList();
+        if (points.isEmpty()) {
+            return null;
+        }
+
+        DifyRecordExtractorClient.GlucoseForecastPoint previous = null;
+        for (DifyRecordExtractorClient.GlucoseForecastPoint point : points) {
+            double pointOffset = point.hourOffset();
+            if (Math.abs(pointOffset - hourOffset) < 0.0001d) {
+                return point.predictedGlucoseMmol();
+            }
+            if (pointOffset > hourOffset) {
+                if (previous == null) {
+                    return point.predictedGlucoseMmol();
+                }
+                double previousOffset = previous.hourOffset();
+                double offsetRange = pointOffset - previousOffset;
+                if (Math.abs(offsetRange) < 0.0001d) {
+                    return point.predictedGlucoseMmol();
+                }
+                double ratio = (hourOffset - previousOffset) / offsetRange;
+                return previous.predictedGlucoseMmol()
+                        + (point.predictedGlucoseMmol() - previous.predictedGlucoseMmol()) * ratio;
+            }
+            previous = point;
+        }
+
+        return previous.predictedGlucoseMmol();
     }
 
     private Double resolveForecastAnchorGlucose(InteractionDayState state) {
@@ -652,10 +802,16 @@ public class InteractionService {
         return String.join("，", fragments) + "。";
     }
 
-    private ForecastComputation buildFallbackForecast(ParsedInteraction parsed, InteractionDayState state, String message) {
+    private ForecastComputation buildFallbackForecast(
+            ParsedInteraction parsed,
+            InteractionDayState state,
+            String message,
+            UserTimeContext userTimeContext,
+            UserProfile profile
+    ) {
         boolean hasMealSignal = parsed.calories() != null
                 || StringUtils.hasText(parsed.foodName())
-                || containsAny(message, "早餐", "早饭", "午餐", "午饭", "晚餐", "晚饭", "加餐", "零食", "米饭", "面", "面包", "水果", "香蕉", "奶茶", "蛋糕", "粥");
+                || containsAny(message, "早餐", "早饭", "午餐", "午饭", "晚餐", "晚饭", "加餐", "零食", "米饭", "面", "面包", "水果", "香蕉", "奶茶", "可乐", "蛋糕", "凉皮", "粥");
         boolean hasOnlyCalibrationSignal = parsed.glucoseMmol() != null && !hasMealSignal && !state.glucoseForecast8h().isEmpty();
 
         if (hasOnlyCalibrationSignal) {
@@ -666,9 +822,14 @@ public class InteractionService {
             return null;
         }
 
+        ActiveGlucoseForecastContext activeForecastContext = resolveActiveGlucoseForecastContext(state, userTimeContext);
+        Double profileBaselineGlucose = resolveProfileBaselineGlucose(profile);
+        double fallbackBaselineGlucose = profileBaselineGlucose != null ? profileBaselineGlucose : DEFAULT_GLUCOSE;
         double anchorGlucose = parsed.glucoseMmol() != null
                 ? parsed.glucoseMmol()
-                : state.glucoseMmol() != null ? state.glucoseMmol() : DEFAULT_GLUCOSE;
+                : Boolean.TRUE.equals(activeForecastContext.valid()) && activeForecastContext.currentGlucoseMmol() != null
+                        ? activeForecastContext.currentGlucoseMmol()
+                        : state.glucoseMmol() != null ? state.glucoseMmol() : fallbackBaselineGlucose;
         int calories = parsed.calories() != null ? parsed.calories() : estimateCaloriesFromFood(message);
         int steps = parsed.steps() != null ? parsed.steps() : state.steps() != null ? state.steps() : 0;
         int exerciseMinutes = parsed.exerciseMinutes() != null ? parsed.exerciseMinutes() : 0;
@@ -676,9 +837,9 @@ public class InteractionService {
         double activityRelief = Math.min(0.9d, (steps / 8000d) * 0.45d + (exerciseMinutes / 40d) * 0.25d);
         double peakRise = clampDouble(mealImpact - activityRelief, 0.35d, 2.8d);
         double peakGlucose = clampDouble(anchorGlucose + peakRise, 4.8d, 13.5d);
-        double peakHourOffset = containsAny(message, "奶茶", "蛋糕", "甜点", "果汁") ? 1d : 2d;
+        double peakHourOffset = containsAny(message, "奶茶", "可乐", "蛋糕", "甜点", "果汁") ? 1d : 2d;
         double returnToBaselineHourOffset = clampDouble(4.5d + (calories / 300d) - activityRelief * 2.2d, 4d, 8d);
-        double terminalValue = clampDouble(Math.max(DEFAULT_GLUCOSE, anchorGlucose - 0.2d), 4.8d, 9.5d);
+        double terminalValue = clampDouble(Math.max(fallbackBaselineGlucose, anchorGlucose - 0.2d), 4.8d, 9.5d);
 
         List<DifyRecordExtractorClient.GlucoseForecastPoint> points = List.of(
                 new DifyRecordExtractorClient.GlucoseForecastPoint(0, roundOneDecimal(anchorGlucose), parsed.glucoseMmol() != null ? "measured_anchor" : "forecast"),
@@ -752,22 +913,174 @@ public class InteractionService {
             return;
         }
 
+        List<DifyRecordExtractorClient.GlucoseForecastPoint> normalizedForecast = normalizeForecastPoints(
+                forecast.glucoseForecast8h(),
+                forecast.forecastAnchorGlucoseMmol()
+        );
+        Double normalizedPeakGlucose = resolvePeakGlucose(normalizedForecast, forecast.peakGlucoseMmol());
+
         state.setGlucoseRiskLevel(forecast.glucoseRiskLevel());
         state.setCalibrationApplied(forecast.calibrationApplied());
-        state.setPeakGlucoseMmol(forecast.peakGlucoseMmol());
-        state.setPeakHourOffset(forecast.peakHourOffset());
+        state.setPeakGlucoseMmol(normalizedPeakGlucose);
+        state.setPeakHourOffset(resolvePeakHourOffset(normalizedForecast, normalizedPeakGlucose, forecast.peakHourOffset()));
         state.setReturnToBaselineHourOffset(forecast.returnToBaselineHourOffset());
-        state.setGlucoseForecast8h(forecast.glucoseForecast8h());
-        state.setForecastAnchorGlucoseMmol(forecast.forecastAnchorGlucoseMmol());
+        state.setGlucoseForecast8h(normalizedForecast);
+        state.setForecastAnchorGlucoseMmol(resolveForecastAnchorGlucose(normalizedForecast, forecast.forecastAnchorGlucoseMmol()));
         state.setForecastSource(source);
+        state.setForecastGeneratedAt(Instant.now());
+    }
+
+    private List<DifyRecordExtractorClient.GlucoseForecastPoint> normalizeForecastPoints(
+            List<DifyRecordExtractorClient.GlucoseForecastPoint> forecastPoints,
+            Double forecastAnchorGlucoseMmol
+    ) {
+        if (forecastPoints == null || forecastPoints.isEmpty()) {
+            return List.of();
+        }
+
+        List<DifyRecordExtractorClient.GlucoseForecastPoint> validPoints = forecastPoints.stream()
+                .filter(point -> point.hourOffset() != null
+                        && point.predictedGlucoseMmol() != null
+                        && point.hourOffset() >= 0
+                        && point.hourOffset() <= 8)
+                .sorted((left, right) -> left.hourOffset().compareTo(right.hourOffset()))
+                .toList();
+        if (validPoints.isEmpty()) {
+            return List.of();
+        }
+
+        Double anchorGlucose = forecastAnchorGlucoseMmol != null
+                ? forecastAnchorGlucoseMmol
+                : validPoints.stream()
+                        .filter(point -> point.hourOffset() != null && point.hourOffset() == 0)
+                        .map(DifyRecordExtractorClient.GlucoseForecastPoint::predictedGlucoseMmol)
+                        .findFirst()
+                        .orElse(validPoints.get(0).predictedGlucoseMmol());
+
+        List<DifyRecordExtractorClient.GlucoseForecastPoint> normalizedPoints = new ArrayList<>();
+        for (Integer requiredOffset : REQUIRED_FORECAST_HOUR_OFFSETS) {
+            DifyRecordExtractorClient.GlucoseForecastPoint existingPoint = validPoints.stream()
+                    .filter(point -> Objects.equals(point.hourOffset(), requiredOffset))
+                    .findFirst()
+                    .orElse(null);
+            if (existingPoint != null) {
+                normalizedPoints.add(existingPoint);
+                continue;
+            }
+
+            Double predictedGlucose = estimateForecastGlucoseAt(validPoints, requiredOffset, anchorGlucose);
+            if (predictedGlucose != null) {
+                normalizedPoints.add(new DifyRecordExtractorClient.GlucoseForecastPoint(
+                        requiredOffset,
+                        roundOneDecimal(predictedGlucose),
+                        "forecast"
+                ));
+            }
+        }
+
+        return List.copyOf(normalizedPoints);
+    }
+
+    private Double estimateForecastGlucoseAt(
+            List<DifyRecordExtractorClient.GlucoseForecastPoint> points,
+            int hourOffset,
+            Double anchorGlucose
+    ) {
+        DifyRecordExtractorClient.GlucoseForecastPoint previous = null;
+        for (DifyRecordExtractorClient.GlucoseForecastPoint point : points) {
+            if (Objects.equals(point.hourOffset(), hourOffset)) {
+                return point.predictedGlucoseMmol();
+            }
+
+            if (point.hourOffset() > hourOffset) {
+                if (previous == null) {
+                    return point.predictedGlucoseMmol();
+                }
+
+                double previousOffset = previous.hourOffset();
+                double offsetRange = point.hourOffset() - previousOffset;
+                if (Math.abs(offsetRange) < 0.0001d) {
+                    return point.predictedGlucoseMmol();
+                }
+
+                double ratio = (hourOffset - previousOffset) / offsetRange;
+                return previous.predictedGlucoseMmol()
+                        + (point.predictedGlucoseMmol() - previous.predictedGlucoseMmol()) * ratio;
+            }
+
+            previous = point;
+        }
+
+        if (previous == null) {
+            return null;
+        }
+        if (anchorGlucose == null || hourOffset <= previous.hourOffset()) {
+            return previous.predictedGlucoseMmol();
+        }
+
+        double remainingWindow = Math.max(1d, 8d - previous.hourOffset());
+        double ratioTowardBaseline = Math.min(1d, (hourOffset - previous.hourOffset()) / remainingWindow);
+        return previous.predictedGlucoseMmol()
+                + (anchorGlucose - previous.predictedGlucoseMmol()) * ratioTowardBaseline * 0.6d;
+    }
+
+    private Double resolvePeakGlucose(
+            List<DifyRecordExtractorClient.GlucoseForecastPoint> forecastPoints,
+            Double fallbackPeakGlucose
+    ) {
+        if (forecastPoints == null || forecastPoints.isEmpty()) {
+            return fallbackPeakGlucose;
+        }
+
+        return forecastPoints.stream()
+                .map(DifyRecordExtractorClient.GlucoseForecastPoint::predictedGlucoseMmol)
+                .filter(Objects::nonNull)
+                .max(Double::compareTo)
+                .map(this::roundOneDecimal)
+                .orElse(fallbackPeakGlucose);
+    }
+
+    private Double resolvePeakHourOffset(
+            List<DifyRecordExtractorClient.GlucoseForecastPoint> forecastPoints,
+            Double peakGlucose,
+            Double fallbackPeakHourOffset
+    ) {
+        if (forecastPoints == null || forecastPoints.isEmpty() || peakGlucose == null) {
+            return fallbackPeakHourOffset;
+        }
+
+        return forecastPoints.stream()
+                .filter(point -> point.predictedGlucoseMmol() != null
+                        && Math.abs(point.predictedGlucoseMmol() - peakGlucose) < 0.0001d)
+                .map(DifyRecordExtractorClient.GlucoseForecastPoint::hourOffset)
+                .filter(Objects::nonNull)
+                .map(Integer::doubleValue)
+                .findFirst()
+                .orElse(fallbackPeakHourOffset);
+    }
+
+    private Double resolveForecastAnchorGlucose(
+            List<DifyRecordExtractorClient.GlucoseForecastPoint> forecastPoints,
+            Double fallbackAnchorGlucose
+    ) {
+        if (forecastPoints == null || forecastPoints.isEmpty()) {
+            return fallbackAnchorGlucose;
+        }
+
+        return forecastPoints.stream()
+                .filter(point -> point.hourOffset() != null && point.hourOffset() == 0)
+                .map(DifyRecordExtractorClient.GlucoseForecastPoint::predictedGlucoseMmol)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(fallbackAnchorGlucose);
     }
 
     private int estimateCaloriesFromFood(String message) {
         int estimate = 320;
-        if (containsAny(message, "米饭", "面", "面包", "粥", "香蕉")) {
+        if (containsAny(message, "米饭", "面", "面包", "粥", "香蕉", "凉皮")) {
             estimate += 180;
         }
-        if (containsAny(message, "奶茶", "蛋糕", "甜点", "果汁")) {
+        if (containsAny(message, "奶茶", "可乐", "蛋糕", "甜点", "果汁")) {
             estimate += 220;
         }
         if (containsAny(message, "鸡胸肉", "鸡蛋", "豆腐", "蔬菜", "沙拉")) {
@@ -778,10 +1091,10 @@ public class InteractionService {
 
     private double estimateMealImpact(String message, int calories) {
         double baseImpact = 0.75d + Math.min(calories, 900) / 300d * 0.35d;
-        if (containsAny(message, "米饭", "面", "面包", "粥", "香蕉", "水果")) {
+        if (containsAny(message, "米饭", "面", "面包", "粥", "香蕉", "水果", "凉皮")) {
             baseImpact += 0.35d;
         }
-        if (containsAny(message, "奶茶", "蛋糕", "甜点", "果汁")) {
+        if (containsAny(message, "奶茶", "可乐", "蛋糕", "甜点", "果汁")) {
             baseImpact += 0.55d;
         }
         if (containsAny(message, "鸡胸肉", "蔬菜", "沙拉", "鸡蛋", "豆腐")) {
@@ -804,6 +1117,10 @@ public class InteractionService {
         return Math.round(value * 10d) / 10d;
     }
 
+    private double roundTwoDecimal(double value) {
+        return Math.round(value * 100d) / 100d;
+    }
+
     private double clampDouble(double value, double min, double max) {
         if (Double.isNaN(value)) {
             return min;
@@ -820,8 +1137,44 @@ public class InteractionService {
         return new ChatMessageResponse(role + "-" + UUID.randomUUID(), role, content, LocalDateTime.now());
     }
 
+    private UserTimeContext resolveUserTimeContext(String requestedTimeZone) {
+        ZoneId zoneId = resolveZoneId(requestedTimeZone);
+        Instant now = Instant.now();
+        ZonedDateTime userNow = now.atZone(zoneId);
+        return new UserTimeContext(
+                now,
+                zoneId.getId(),
+                userNow.toLocalDate().toString(),
+                userNow.toLocalTime().withNano(0).toString(),
+                userNow.withNano(0).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+                userNow.getOffset().getId()
+        );
+    }
+
+    private ZoneId resolveZoneId(String requestedTimeZone) {
+        if (StringUtils.hasText(requestedTimeZone)) {
+            try {
+                return ZoneId.of(requestedTimeZone.trim());
+            } catch (DateTimeException ignored) {
+                // Fall through to the server default when the client sends an unknown zone id.
+            }
+        }
+
+        return ZoneId.systemDefault();
+    }
+
+    private String formatInstantForUser(Instant instant, UserTimeContext userTimeContext) {
+        return instant.atZone(resolveZoneId(userTimeContext.timeZone()))
+                .withNano(0)
+                .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+    }
+
     private LocalDate resolveDate(LocalDate date) {
         return date != null ? date : LocalDate.now();
+    }
+
+    private LocalDate resolveDate(LocalDate date, UserTimeContext userTimeContext) {
+        return date != null ? date : LocalDate.parse(userTimeContext.currentDate());
     }
 
     private String dayKey(Long userId, LocalDate date) {

@@ -108,6 +108,7 @@ export type ChatSendPayload = {
   message: string;
   inputMode: "text" | "voice";
   focusDate?: string;
+  timeZone?: string;
 };
 
 export type ChatSendResult = {

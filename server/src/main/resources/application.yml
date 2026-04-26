@@ -40,7 +40,7 @@ app:
       api-key: ${DIFY_EXTRACTOR_API_KEY:}
       workflow-id: ${DIFY_EXTRACTOR_WORKFLOW_ID:}
       input-variable: ${DIFY_EXTRACTOR_INPUT_VARIABLE:UserInput}
-      profile-input-variable: ${DIFY_EXTRACTOR_PROFILE_INPUT_VARIABLE:}
+      profile-input-variable: ${DIFY_EXTRACTOR_PROFILE_INPUT_VARIABLE:UserProfile}
   seed:
     enabled: true
 

@@ -43,7 +43,7 @@ public class DifyRecordExtractorClient {
     @Value("${app.dify.extractor.input-variable:UserInput}")
     private String inputVariable;
 
-    @Value("${app.dify.extractor.profile-input-variable:}")
+    @Value("${app.dify.extractor.profile-input-variable:UserProfile}")
     private String profileInputVariable;
 
     public Optional<RecordExtractionResult> extract(Long userId, String message, UserProfile profile) {
@@ -57,6 +57,9 @@ public class DifyRecordExtractorClient {
             ExtractorContext extractorContext
     ) {
         if (!StringUtils.hasText(baseUrl) || !StringUtils.hasText(apiKey) || !StringUtils.hasText(message)) {
+            if (StringUtils.hasText(message)) {
+                log.warn("Dify record extractor is disabled: base-url or api-key is empty");
+            }
             return Optional.empty();
         }
 
@@ -136,7 +139,7 @@ public class DifyRecordExtractorClient {
 
             return Optional.of(result);
         } catch (Exception ex) {
-            log.warn("Failed to call Dify record extractor: {}", ex.getMessage());
+            log.warn("Failed to call Dify record extractor at {}: {}", endpoint, ex.getMessage());
             return Optional.empty();
         }
     }
@@ -209,9 +212,22 @@ public class DifyRecordExtractorClient {
             payload.put("careFocus", profile.getCareFocus());
             payload.put("healthGoal", profile.getHealthGoal());
         }
-        if (extractorContext != null && extractorContext.hasDynamicContext()) {
+        if (extractorContext != null) {
+            payload.put("userTimeZone", extractorContext.userTimeZone());
+            payload.put("userCurrentDate", extractorContext.userCurrentDate());
+            payload.put("userCurrentTime", extractorContext.userCurrentTime());
+            payload.put("userCurrentDateTime", extractorContext.userCurrentDateTime());
+            payload.put("userCurrentUtcOffset", extractorContext.userCurrentUtcOffset());
+            payload.put("predictionBaselineGlucoseMmol", extractorContext.predictionBaselineGlucoseMmol());
+            payload.put("predictionBaselineSource", extractorContext.predictionBaselineSource());
+            payload.put("defaultGlucoseMmol", extractorContext.defaultGlucoseMmol());
             payload.put("currentGlucoseMmol", extractorContext.currentGlucoseMmol());
             payload.put("currentGlucoseSource", extractorContext.currentGlucoseSource());
+            payload.put("activeForecastCurrentGlucoseMmol", extractorContext.activeForecastCurrentGlucoseMmol());
+            payload.put("activeForecastCurrentHourOffset", extractorContext.activeForecastCurrentHourOffset());
+            payload.put("activeForecastValid", extractorContext.activeForecastValid());
+            payload.put("activeForecastStartedAt", extractorContext.activeForecastStartedAt());
+            payload.put("activeForecastExpiresAt", extractorContext.activeForecastExpiresAt());
             payload.put("activeGlucoseRiskLevel", extractorContext.activeGlucoseRiskLevel());
             payload.put("activeCalibrationApplied", extractorContext.activeCalibrationApplied());
             payload.put("activePeakGlucoseMmol", extractorContext.activePeakGlucoseMmol());
@@ -386,8 +402,21 @@ public class DifyRecordExtractorClient {
     }
 
     public record ExtractorContext(
+            String userTimeZone,
+            String userCurrentDate,
+            String userCurrentTime,
+            String userCurrentDateTime,
+            String userCurrentUtcOffset,
+            Double predictionBaselineGlucoseMmol,
+            String predictionBaselineSource,
+            Double defaultGlucoseMmol,
             Double currentGlucoseMmol,
             String currentGlucoseSource,
+            Double activeForecastCurrentGlucoseMmol,
+            Double activeForecastCurrentHourOffset,
+            Boolean activeForecastValid,
+            String activeForecastStartedAt,
+            String activeForecastExpiresAt,
             String activeGlucoseRiskLevel,
             Boolean activeCalibrationApplied,
             Double activePeakGlucoseMmol,
@@ -397,8 +426,18 @@ public class DifyRecordExtractorClient {
             String activeForecastSource
     ) {
         public boolean hasDynamicContext() {
-            return currentGlucoseMmol != null
+            return StringUtils.hasText(userCurrentDateTime)
+                    || StringUtils.hasText(userTimeZone)
+                    || predictionBaselineGlucoseMmol != null
+                    || StringUtils.hasText(predictionBaselineSource)
+                    || defaultGlucoseMmol != null
+                    || currentGlucoseMmol != null
                     || StringUtils.hasText(currentGlucoseSource)
+                    || activeForecastCurrentGlucoseMmol != null
+                    || activeForecastCurrentHourOffset != null
+                    || activeForecastValid != null
+                    || StringUtils.hasText(activeForecastStartedAt)
+                    || StringUtils.hasText(activeForecastExpiresAt)
                     || StringUtils.hasText(activeGlucoseRiskLevel)
                     || activeCalibrationApplied != null
                     || activePeakGlucoseMmol != null

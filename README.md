@@ -204,7 +204,7 @@ Set-Content mobile\.env "EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:8080"
 - Android 模拟器：`http://10.0.2.2:8080`
 - Android 真机：`http://<你的局域网 IP>:8080`
 
-> 如果不显式设置 `EXPO_PUBLIC_API_BASE_URL`，开发环境会回退到代码里写死的远端地址 `http://150.158.117.174`，本地联调时不建议依赖这个默认值。
+> 如果不显式设置 `EXPO_PUBLIC_API_BASE_URL`，移动端会回退到代码里写死的远端地址 `http://150.158.117.174`，本地联调和 release 打包时都不建议依赖这个默认值。
 
 #### 3. 一键启动
 
@@ -375,9 +375,12 @@ mobile/android/app/build/outputs/apk/release/app-release.apk
 ### 更小的 arm64 Release APK
 
 ```powershell
+Set-Content mobile\.env "EXPO_PUBLIC_API_BASE_URL=http://<你的服务器地址>:8080"
 cd mobile\android
 .\gradlew.bat assembleRelease '-PreactNativeArchitectures=arm64-v8a' '-Pandroid.enableMinifyInReleaseBuilds=true' '-Pandroid.enableShrinkResourcesInReleaseBuilds=true'
 ```
+
+> Release 包会在构建时固化 `mobile/.env` 中的 `EXPO_PUBLIC_API_BASE_URL`。如果这里还是模拟器地址 `http://10.0.2.2:8080`，真机安装后会连不到你的服务器；真机请改成局域网 IP 或公网服务器地址。
 
 > 当前 `release` 仍使用 debug keystore 签名，只适合内部验证；如果要正式分发，需要先修改 [mobile/android/app/build.gradle](mobile/android/app/build.gradle) 中的签名配置。
 

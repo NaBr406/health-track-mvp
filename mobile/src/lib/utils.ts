@@ -13,6 +13,14 @@ export function getTodayString() {
   return toDateKey(new Date());
 }
 
+export function getLocalTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function getDateOffsetString(offset: number) {
   const date = new Date();
   date.setDate(date.getDate() + offset);

@@ -1,7 +1,8 @@
 ﻿import { invalidateStoredSession, loadToken } from "../../lib/auth";
 
 const RELEASE_API_BASE_URL = "http://150.158.117.174";
-const API_BASE_URL = __DEV__ ? process.env.EXPO_PUBLIC_API_BASE_URL || RELEASE_API_BASE_URL : RELEASE_API_BASE_URL;
+const ENV_API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
+const API_BASE_URL = (ENV_API_BASE_URL || RELEASE_API_BASE_URL).replace(/\/+$/, "");
 
 export class AuthExpiredError extends Error {
   constructor(message = "Session expired. Please sign in again.") {

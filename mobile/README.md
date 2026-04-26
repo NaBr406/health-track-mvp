@@ -93,7 +93,9 @@ Set-Content .env "EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:8080"
 - Android 模拟器：`http://10.0.2.2:8080`
 - Android 真机：`http://<your-lan-ip>:8080`
 
-如果不设置，开发环境会回退到代码中的默认远端地址。
+如果不设置，移动端会回退到代码中的默认远端地址。本地联调和 release 打包时都建议显式设置 `EXPO_PUBLIC_API_BASE_URL`。
+
+Release 包会在构建时固化 `.env` 中的 `EXPO_PUBLIC_API_BASE_URL`。真机安装 APK 时不要使用 `http://10.0.2.2:8080`，应改成局域网 IP 或公网服务器地址。
 
 ## 平台要求
 

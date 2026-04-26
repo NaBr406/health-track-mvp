@@ -21,10 +21,12 @@ import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
@@ -38,6 +40,10 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 @RequiredArgsConstructor
 public class AdviceService {
+
+    private static final Pattern UUID_TEXT_PATTERN = Pattern.compile(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    );
 
     private final UserRepository userRepository;
     private final UserProfileRepository userProfileRepository;
@@ -105,7 +111,7 @@ public class AdviceService {
         log.setAdviceDate(adviceDate);
         log.setRequestPayload(writeJson(payload));
         log.setResponsePayload(result.rawResponse());
-        log.setAdviceText(result.adviceText());
+        log.setAdviceText(sanitizeAdviceText(result.adviceText()));
         log.setSource(result.source());
         log.setStatus("SUCCESS");
         return toResponse(aiAdviceLogRepository.save(log));
@@ -227,10 +233,18 @@ public class AdviceService {
     private DailyAdviceResponse toResponse(AiAdviceLog log) {
         return new DailyAdviceResponse(
                 log.getAdviceDate(),
-                log.getAdviceText(),
+                sanitizeAdviceText(log.getAdviceText()),
                 log.getSource(),
                 log.getStatus(),
                 log.getCreatedAt()
         );
+    }
+
+    private String sanitizeAdviceText(String adviceText) {
+        if (!StringUtils.hasText(adviceText) || UUID_TEXT_PATTERN.matcher(adviceText.trim()).matches()) {
+            return "今天的建议会根据饮食、活动和血糖记录动态更新。先从补齐餐后活动、减少含糖饮料和持续记录血糖开始。";
+        }
+
+        return adviceText.trim();
     }
 }

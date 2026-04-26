@@ -11,7 +11,7 @@ import {
   type UIChatMessage
 } from "../model/chatMessageUi";
 import { isAuthExpiredError } from "../../../shared/api/client";
-import { getTodayString } from "../../../lib/utils";
+import { getLocalTimeZone, getTodayString } from "../../../lib/utils";
 import type { ChatSendPayload, ChatSendResult } from "../../../types";
 
 type UseChatThreadStateParams = {
@@ -259,7 +259,8 @@ export function useChatThreadState({
     const payload: ChatSendPayload = {
       focusDate,
       inputMode,
-      message: content
+      message: content,
+      timeZone: getLocalTimeZone()
     };
 
     updateMessages((current) => [

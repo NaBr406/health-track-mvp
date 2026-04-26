@@ -31,7 +31,8 @@ public final class InteractionDtos {
     public record InteractionMessageRequest(
             String message,
             String inputMode,
-            LocalDate focusDate
+            LocalDate focusDate,
+            String timeZone
     ) {
     }
 

@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,6 +30,10 @@ import org.springframework.web.client.RestClient;
 @Component
 @RequiredArgsConstructor
 public class DifyClient {
+
+    private static final Pattern UUID_TEXT_PATTERN = Pattern.compile(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    );
 
     private static final List<String> DIRECT_TEXT_PATHS = List.of(
             "/data/outputs/text",
@@ -77,6 +82,7 @@ public class DifyClient {
      */
     public Optional<DifyAdviceResult> generateDailyAdvice(Long userId, LocalDate adviceDate, Map<String, Object> context) {
         if (!StringUtils.hasText(baseUrl) || !StringUtils.hasText(apiKey)) {
+            log.warn("Dify daily advice is disabled: base-url or api-key is empty");
             return Optional.empty();
         }
 
@@ -106,7 +112,7 @@ public class DifyClient {
 
             return Optional.of(new DifyAdviceResult(adviceText, "dify", response == null ? "{}" : response.toString()));
         } catch (Exception ex) {
-            log.warn("Failed to call Dify workflow: {}", ex.getMessage());
+            log.warn("Failed to call Dify daily advice workflow at {}: {}", endpoint, ex.getMessage());
             return Optional.empty();
         }
     }
@@ -191,7 +197,7 @@ public class DifyClient {
 
         if (normalizedNode.isTextual()) {
             String text = normalizedNode.asText(null);
-            return StringUtils.hasText(text) ? text.trim() : null;
+            return isUsableAdviceText(text) ? text.trim() : null;
         }
 
         if (normalizedNode.isObject()) {
@@ -215,7 +221,7 @@ public class DifyClient {
             Iterator<Map.Entry<String, JsonNode>> fields = normalizedNode.fields();
             while (fields.hasNext()) {
                 JsonNode value = fields.next().getValue();
-                if (value != null && value.isTextual() && StringUtils.hasText(value.asText())) {
+                if (value != null && value.isTextual() && isUsableAdviceText(value.asText())) {
                     return value.asText().trim();
                 }
             }
@@ -234,6 +240,15 @@ public class DifyClient {
         }
 
         return null;
+    }
+
+    private boolean isUsableAdviceText(String text) {
+        if (!StringUtils.hasText(text)) {
+            return false;
+        }
+
+        String trimmed = text.trim();
+        return !UUID_TEXT_PATTERN.matcher(trimmed).matches();
     }
 
     private JsonNode normalizeNode(JsonNode node) {

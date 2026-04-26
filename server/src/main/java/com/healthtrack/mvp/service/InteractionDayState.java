@@ -1,6 +1,7 @@
 package com.healthtrack.mvp.service;
 
 import com.healthtrack.mvp.integration.dify.DifyRecordExtractorClient;
+import java.time.Instant;
 import java.util.List;
 
 final class InteractionDayState {
@@ -16,6 +17,7 @@ final class InteractionDayState {
     private Double returnToBaselineHourOffset;
     private List<DifyRecordExtractorClient.GlucoseForecastPoint> glucoseForecast8h = List.of();
     private String forecastSource;
+    private Instant forecastGeneratedAt;
 
     Integer steps() {
         return steps;
@@ -103,5 +105,13 @@ final class InteractionDayState {
 
     void setForecastSource(String forecastSource) {
         this.forecastSource = forecastSource;
+    }
+
+    Instant forecastGeneratedAt() {
+        return forecastGeneratedAt;
+    }
+
+    void setForecastGeneratedAt(Instant forecastGeneratedAt) {
+        this.forecastGeneratedAt = forecastGeneratedAt;
     }
 }
