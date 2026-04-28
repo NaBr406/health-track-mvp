@@ -5,12 +5,13 @@
   markDeviceStepCounterSyncSuccess,
   openDeviceStepCounterSettings as openDeviceStepCounterSettingsApp,
   readDeviceStepCounterRecords,
+  readRecentHourlyStepRecords,
   refreshDeviceStepCounterState,
   requestDeviceStepCounterPermission
 } from "../../../lib/deviceStepCounter";
 import { request } from "../../../shared/api/client";
 import { resolveIdentity, type DataIdentity } from "../../../shared/api/identity";
-import type { AuthSession, StepSyncRecord } from "../../../types";
+import type { AuthSession, StepHourBucket, StepSyncRecord } from "../../../types";
 
 type ServerStepRecordSyncRequest = {
   records: Array<{
@@ -75,6 +76,11 @@ async function syncStepRecordsToServer(identity: DataIdentity, records: ServerSt
 export async function getMergedLocalStepRecords(session?: AuthSession | null, focusDate?: string) {
   const deviceStepCounter = await readDeviceStepCounterRecords(session, { endDate: focusDate, days: 7 });
   return mergeStepRecords(deviceStepCounter.state.status === "ready" ? deviceStepCounter.records : []);
+}
+
+export async function getRecentHourlyStepTrend(session?: AuthSession | null) {
+  const deviceStepCounter = await readRecentHourlyStepRecords(session, { hours: 8 });
+  return deviceStepCounter.state.status === "ready" ? deviceStepCounter.records : ([] as StepHourBucket[]);
 }
 
 export function resolveDisplayStepSource(record: Pick<StepSyncRecord, "source" | "steps">) {

@@ -10,5 +10,9 @@ export type {
   GlucoseChartPoint,
   GlucoseChartSeriesMeta,
   GlucoseRiskTone,
-  MetricCardMeta
+  MetricCardMeta,
+  StepInlineChartBarMeta,
+  StepInlineChartEmptyMeta,
+  StepInlineChartMeta,
+  StepInlineChartSeriesMeta
 } from "./dashboardModelTypes";

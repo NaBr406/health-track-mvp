@@ -12,3 +12,10 @@ data class DeviceStepDailyRecord(
   val steps: Int,
   val sampledAtIso: String?
 )
+
+data class DeviceStepHourlyRecord(
+  val hourStartIso: String,
+  val label: String,
+  val steps: Int,
+  val isCurrentHour: Boolean
+)

@@ -15,13 +15,11 @@ export function DashboardMetricCard({ metric }: DashboardMetricCardProps) {
 
 function RingMetricCard({ metric }: DashboardMetricCardProps) {
   return (
-    <View style={styles.metricCard}>
+    <View style={[styles.metricCard, metric.inlineChart ? styles.metricCardWithInlineChart : null]}>
       <MetricCardHeader metric={metric} />
       <View style={styles.metricBody}>
         <MetricValueBlock metric={metric} />
-        <View style={styles.metricRingRow}>
-          <CircularProgressRing progress={metric.progress ?? 0} />
-        </View>
+        {metric.inlineChart ? <StepInlineChart chart={metric.inlineChart} /> : <View style={styles.metricRingRow}><CircularProgressRing progress={metric.progress ?? 0} /></View>}
       </View>
     </View>
   );
@@ -87,6 +85,64 @@ function MetricValueBlock({ metric }: DashboardMetricCardProps) {
   );
 }
 
+function StepInlineChart({ chart }: { chart: NonNullable<MetricCardMeta["inlineChart"]> }) {
+  if (chart.kind === "empty") {
+    return (
+      <View style={styles.inlineChartBlock}>
+        <View style={styles.inlineChartHeader}>
+          <Text style={styles.inlineChartTitle}>近 8 小时</Text>
+          <Text style={styles.inlineChartMeta}>小时步数</Text>
+        </View>
+        <View style={styles.inlineChartGhostRow}>
+          {Array.from({ length: 8 }, (_, index) => (
+            <View key={`ghost-${index}`} style={styles.inlineChartColumn}>
+              <View style={styles.inlineChartTrack}>
+                <View
+                  style={[
+                    styles.inlineChartGhostFill,
+                    { height: `${24 + (index % 4) * 10}%` },
+                    index === 7 ? styles.inlineChartGhostFillCurrent : null
+                  ]}
+                />
+              </View>
+              <Text style={styles.inlineChartGhostLabel}>--</Text>
+            </View>
+          ))}
+        </View>
+        <Text style={styles.inlineChartEmptyText}>{chart.emptyLabel}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.inlineChartBlock}>
+      <View style={styles.inlineChartHeader}>
+        <Text style={styles.inlineChartTitle}>近 8 小时</Text>
+        <Text style={styles.inlineChartMeta}>小时步数</Text>
+      </View>
+      <View style={styles.inlineChartRow}>
+        {chart.bars.map((bar) => {
+          const height = chart.maxSteps > 0 ? (bar.steps / chart.maxSteps) * 100 : 0;
+          return (
+            <View key={`${bar.label}-${bar.isCurrentHour ? "current" : "past"}`} style={styles.inlineChartColumn}>
+              <View style={styles.inlineChartTrack}>
+                <View
+                  style={[
+                    styles.inlineChartFill,
+                    bar.isCurrentHour ? styles.inlineChartFillCurrent : styles.inlineChartFillPast,
+                    { height: `${bar.steps > 0 ? Math.max(height, 14) : 0}%` }
+                  ]}
+                />
+              </View>
+              <Text style={[styles.inlineChartLabel, bar.isCurrentHour ? styles.inlineChartLabelCurrent : null]}>{bar.label}</Text>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 function CircularProgressRing({ progress }: { progress: number }) {
   const size = 64;
   const stroke = 5;
@@ -141,6 +197,9 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     gap: spacing.md,
     ...shadows.card
+  },
+  metricCardWithInlineChart: {
+    minHeight: 224
   },
   metricHeader: {
     flexDirection: "row",
@@ -233,6 +292,95 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontSize: typography.caption,
     fontWeight: "800"
+  },
+  inlineChartBlock: {
+    gap: spacing.sm,
+    borderRadius: radii.md,
+    borderWidth: borders.standard,
+    borderColor: "rgba(0, 82, 204, 0.08)",
+    backgroundColor: "rgba(0, 82, 204, 0.03)",
+    paddingHorizontal: spacing.sm,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs
+  },
+  inlineChartHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm
+  },
+  inlineChartTitle: {
+    color: colors.text,
+    fontSize: typography.caption,
+    fontWeight: "800"
+  },
+  inlineChartMeta: {
+    color: colors.textSoft,
+    fontSize: 11,
+    fontWeight: "600"
+  },
+  inlineChartRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 4
+  },
+  inlineChartGhostRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 4
+  },
+  inlineChartColumn: {
+    flex: 1,
+    alignItems: "center",
+    gap: spacing.xs
+  },
+  inlineChartTrack: {
+    width: "100%",
+    maxWidth: 12,
+    height: 64,
+    borderRadius: radii.pill,
+    backgroundColor: "rgba(0, 82, 204, 0.10)",
+    overflow: "hidden",
+    justifyContent: "flex-end"
+  },
+  inlineChartFill: {
+    width: "100%",
+    borderRadius: radii.pill
+  },
+  inlineChartFillPast: {
+    backgroundColor: "rgba(0, 82, 204, 0.36)"
+  },
+  inlineChartFillCurrent: {
+    backgroundColor: colors.primary
+  },
+  inlineChartGhostFill: {
+    width: "100%",
+    borderRadius: radii.pill,
+    backgroundColor: "rgba(0, 82, 204, 0.12)"
+  },
+  inlineChartGhostFillCurrent: {
+    backgroundColor: "rgba(0, 82, 204, 0.20)"
+  },
+  inlineChartLabel: {
+    color: colors.textSoft,
+    fontSize: 10,
+    fontWeight: "700"
+  },
+  inlineChartLabelCurrent: {
+    color: colors.primary
+  },
+  inlineChartGhostLabel: {
+    color: colors.textSoft,
+    fontSize: 10,
+    fontWeight: "700"
+  },
+  inlineChartEmptyText: {
+    color: colors.textSoft,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: "600"
   },
   glucoseTrendCard: {
     width: "100%",

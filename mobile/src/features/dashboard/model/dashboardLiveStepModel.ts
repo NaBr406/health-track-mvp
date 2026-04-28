@@ -1,21 +1,22 @@
 import { parseLeadingNumber } from "../../../lib/utils";
-import type { DashboardSnapshot, StepSyncRecord } from "../../../types";
+import type { DashboardSnapshot, StepLiveUpdateRecord } from "../../../types";
 
 const DEVICE_STEP_COUNTER_PENDING_SOURCE = "已启用设备计步，等待下一次采样";
 
-function resolveLiveStepSource(record: StepSyncRecord) {
+function resolveLiveStepSource(record: StepLiveUpdateRecord) {
   return record.steps > 0 ? record.source : DEVICE_STEP_COUNTER_PENDING_SOURCE;
 }
 
-export function applyLiveStepRecord(snapshot: DashboardSnapshot | null, record: StepSyncRecord) {
+export function applyLiveStepRecord(snapshot: DashboardSnapshot | null, record: StepLiveUpdateRecord) {
   if (!snapshot) {
     return snapshot;
   }
 
+  const isFocusedDate = snapshot.focusDate === record.recordedOn;
   const liveSource = resolveLiveStepSource(record);
   const nextMetrics = snapshot.metrics.some((metric) => metric.id === "steps")
     ? snapshot.metrics.map((metric) =>
-        metric.id === "steps" && snapshot.focusDate === record.recordedOn
+        metric.id === "steps" && isFocusedDate
           ? (() => {
               const currentSteps = parseLeadingNumber(metric.value) ?? 0;
               const nextSteps = Math.max(currentSteps, record.steps);
@@ -27,7 +28,7 @@ export function applyLiveStepRecord(snapshot: DashboardSnapshot | null, record: 
             })()
           : metric
       )
-    : snapshot.focusDate === record.recordedOn
+    : isFocusedDate
       ? [
           ...snapshot.metrics,
           {
@@ -55,6 +56,7 @@ export function applyLiveStepRecord(snapshot: DashboardSnapshot | null, record: 
     ...snapshot,
     refreshedAt: new Date().toISOString(),
     metrics: nextMetrics,
-    history: nextHistory
+    history: nextHistory,
+    stepTrend8h: isFocusedDate ? record.stepTrend8h : snapshot.stepTrend8h
   };
 }

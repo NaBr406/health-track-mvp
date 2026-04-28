@@ -1,13 +1,15 @@
-﻿import {
+import {
   getFallbackDashboardSnapshot,
   getFallbackRecordedGlucosePoints,
   submitFallbackDashboardFeedback
 } from "../../../lib/mockStore";
+import { getTodayString } from "../../../lib/utils";
 import { buildQuery, request } from "../../../shared/api/client";
 import { resolveIdentity, type DataIdentity } from "../../../shared/api/identity";
-import type { DashboardFeedbackPayload, DashboardSnapshot } from "../../../types";
+import type { DashboardFeedbackPayload, DashboardSnapshot, StepHourBucket } from "../../../types";
 import {
   getMergedLocalStepRecords,
+  getRecentHourlyStepTrend,
   resolveDisplayStepSource,
   syncStepSourcesForIdentity
 } from "../../steps/api/deviceStepCounterApi";
@@ -29,6 +31,24 @@ type ServerStepRecordSyncRequest = {
 };
 
 const glucoseRecoveryTasks = new Map<string, Promise<void>>();
+
+function shouldAttachStepTrend(date?: string) {
+  return (date ?? getTodayString()) === getTodayString();
+}
+
+function withLocalStepTrend(snapshot: DashboardSnapshot, stepTrend8h: StepHourBucket[], date?: string) {
+  const today = getTodayString();
+  const targetDate = date ?? today;
+
+  if (targetDate !== today || snapshot.focusDate !== targetDate) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    stepTrend8h
+  };
+}
 
 async function recoverAccountGlucoseRecords(identity: DataIdentity) {
   if (!identity.session) {
@@ -165,6 +185,7 @@ function mergeDashboardSnapshotWithStepRecords(snapshot: DashboardSnapshot, step
 
 async function getDashboardSnapshot(date?: string) {
   const identity = await resolveIdentity();
+  const shouldLoadStepTrend = shouldAttachStepTrend(date);
 
   if (!identity.session) {
     try {
@@ -173,15 +194,19 @@ async function getDashboardSnapshot(date?: string) {
       // Reading device steps should not block guest-mode rendering.
     }
 
-    const fallbackSnapshot = await getFallbackDashboardSnapshot(identity.scopeKey, date);
-    const deviceSteps = await getMergedLocalStepRecords(identity.session, date);
-    return mergeDashboardSnapshotWithStepRecords(fallbackSnapshot, deviceSteps);
+    const [fallbackSnapshot, deviceSteps, stepTrend8h] = await Promise.all([
+      getFallbackDashboardSnapshot(identity.scopeKey, date),
+      getMergedLocalStepRecords(identity.session, date),
+      shouldLoadStepTrend ? getRecentHourlyStepTrend(identity.session) : Promise.resolve([] as StepHourBucket[])
+    ]);
+
+    return withLocalStepTrend(mergeDashboardSnapshotWithStepRecords(fallbackSnapshot, deviceSteps), stepTrend8h, date);
   }
 
   try {
     await recoverAccountGlucoseRecords(identity);
   } catch {
-    // 数据补偿属于尽力而为，失败时不应该阻塞当前页面读取。
+    // Data recovery is best effort and should not block the dashboard.
   }
 
   try {
@@ -190,16 +215,20 @@ async function getDashboardSnapshot(date?: string) {
     // Step sync is best-effort and should not block the dashboard.
   }
 
-  const snapshot = await request<DashboardSnapshot>(`/api/dashboard/snapshot${buildQuery({ date })}`, {}, () =>
-    getFallbackDashboardSnapshot(identity.scopeKey, date)
-  );
+  const [snapshot, stepTrend8h] = await Promise.all([
+    request<DashboardSnapshot>(`/api/dashboard/snapshot${buildQuery({ date })}`, {}, () =>
+      getFallbackDashboardSnapshot(identity.scopeKey, date)
+    ),
+    shouldLoadStepTrend ? getRecentHourlyStepTrend(identity.session) : Promise.resolve([] as StepHourBucket[])
+  ]);
+  const snapshotWithStepTrend = withLocalStepTrend(snapshot, stepTrend8h, date);
 
-  if (snapshot.dataSource === "server") {
-    return snapshot;
+  if (snapshotWithStepTrend.dataSource === "server") {
+    return snapshotWithStepTrend;
   }
 
   const deviceSteps = await getMergedLocalStepRecords(identity.session, date);
-  return mergeDashboardSnapshotWithStepRecords(snapshot, deviceSteps);
+  return mergeDashboardSnapshotWithStepRecords(snapshotWithStepTrend, deviceSteps);
 }
 
 async function submitAdjustmentFeedback(payload: DashboardFeedbackPayload) {

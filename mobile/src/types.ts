@@ -71,6 +71,13 @@ export type GlucoseForecastPoint = {
   pointType?: "measured_anchor" | "forecast" | string;
 };
 
+export type StepHourBucket = {
+  hourStartIso: string;
+  label: string;
+  steps: number;
+  isCurrentHour: boolean;
+};
+
 export type DashboardSnapshot = {
   focusDate: string;
   headline: string;
@@ -85,6 +92,7 @@ export type DashboardSnapshot = {
   peakHourOffset?: number | null;
   returnToBaselineHourOffset?: number | null;
   glucoseForecast8h?: GlucoseForecastPoint[];
+  stepTrend8h?: StepHourBucket[];
   forecastSource?: "dify" | "local" | string | null;
   dataSource: DataSource;
 };
@@ -131,6 +139,10 @@ export type StepSyncRecord = {
   sourceDevice?: string | null;
   sourceTimeZone?: string | null;
   syncedAt: string;
+};
+
+export type StepLiveUpdateRecord = StepSyncRecord & {
+  stepTrend8h: StepHourBucket[];
 };
 
 export type HealthConnectSdkStatus = "available" | "unavailable" | "update_required";

@@ -21,8 +21,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.util.concurrent.TimeUnit
 
 class DeviceStepCounterModule(
@@ -130,6 +132,45 @@ class DeviceStepCounterModule(
   }
 
   @ReactMethod
+  fun readRecentHourlyRecords(hours: Double, promise: Promise) {
+    moduleScope.launch {
+      try {
+        val context = reactApplicationContext
+        if (!isStepCounterSensorAvailable(context) || !hasActivityRecognitionPermission(context)) {
+          promise.resolve(Arguments.createArray())
+          return@launch
+        }
+
+        DeviceStepCounterScheduler.ensureScheduled(context)
+
+        val store = DeviceStepSnapshotStore(context)
+        try {
+          store.pruneOlderThan(System.currentTimeMillis() - TimeUnit.DAYS.toMillis(35))
+          val records = buildHourlyRecords(store, hours.toInt().coerceIn(1, 24))
+          val payload = Arguments.createArray()
+
+          records.forEach { record ->
+            payload.pushMap(
+              Arguments.createMap().apply {
+                putString("hourStartIso", record.hourStartIso)
+                putString("label", record.label)
+                putInt("steps", record.steps)
+                putBoolean("isCurrentHour", record.isCurrentHour)
+              }
+            )
+          }
+
+          promise.resolve(payload)
+        } finally {
+          store.close()
+        }
+      } catch (error: Exception) {
+        promise.reject("E_DEVICE_STEP_COUNTER_RECENT_HOURLY", error.message, error)
+      }
+    }
+  }
+
+  @ReactMethod
   fun startLiveUpdates(promise: Promise) {
     moduleScope.launch {
       try {
@@ -180,25 +221,8 @@ class DeviceStepCounterModule(
     val zoneId = ZoneId.systemDefault()
     val dayStartEpochMs = date.atStartOfDay(zoneId).toInstant().toEpochMilli()
     val dayEndEpochMs = date.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
-    val baseline = store.getLatestSnapshotBefore(dayStartEpochMs)
     val daySnapshots = store.getSnapshotsBetween(dayStartEpochMs, dayEndEpochMs)
-    val sequence = buildList {
-      if (baseline != null) {
-        add(baseline)
-      }
-      addAll(daySnapshots)
-      if (additionalSnapshot != null) {
-        val lastSnapshot = lastOrNull()
-        val isDuplicate = lastSnapshot != null &&
-          lastSnapshot.recordedAtEpochMs == additionalSnapshot.recordedAtEpochMs &&
-          lastSnapshot.elapsedRealtimeMs == additionalSnapshot.elapsedRealtimeMs &&
-          lastSnapshot.stepsSinceBoot == additionalSnapshot.stepsSinceBoot
-
-        if (!isDuplicate) {
-          add(additionalSnapshot)
-        }
-      }
-    }
+    val sequence = buildSnapshotSequence(store, dayStartEpochMs, dayEndEpochMs, additionalSnapshot)
 
     val steps = if (sequence.size < 2) {
       0
@@ -221,6 +245,84 @@ class DeviceStepCounterModule(
       steps = steps,
       sampledAtIso = sampledAtIso
     )
+  }
+
+  private fun buildHourlyRecords(
+    store: DeviceStepSnapshotStore,
+    hours: Int,
+    additionalSnapshot: DeviceStepSnapshot? = null
+  ): List<DeviceStepHourlyRecord> {
+    val zoneId = ZoneId.systemDefault()
+    val bucketCount = hours.coerceIn(1, 24)
+    val currentHourStart = Instant.ofEpochMilli(additionalSnapshot?.recordedAtEpochMs ?: System.currentTimeMillis())
+      .atZone(zoneId)
+      .withMinute(0)
+      .withSecond(0)
+      .withNano(0)
+    val hourStarts = List(bucketCount) { index ->
+      currentHourStart.minusHours((bucketCount - 1 - index).toLong())
+    }
+    val windowStartEpochMs = hourStarts.first().toInstant().toEpochMilli()
+    val windowEndEpochMs = currentHourStart.plusHours(1).toInstant().toEpochMilli()
+    val sequence = buildSnapshotSequence(store, windowStartEpochMs, windowEndEpochMs, additionalSnapshot)
+
+    if (sequence.size < 2) {
+      return emptyList()
+    }
+
+    val hourIndexByStartEpochMs = hourStarts
+      .mapIndexed { index, hourStart -> hourStart.toInstant().toEpochMilli() to index }
+      .toMap()
+    val bucketSteps = IntArray(bucketCount)
+
+    sequence.zipWithNext().forEach { (previous, current) ->
+      val increment = resolveStepIncrement(previous, current)
+        .coerceIn(0L, Int.MAX_VALUE.toLong())
+        .toInt()
+      val bucketStartEpochMs = toHourStart(current.recordedAtEpochMs, zoneId).toInstant().toEpochMilli()
+      val bucketIndex = hourIndexByStartEpochMs[bucketStartEpochMs] ?: return@forEach
+
+      bucketSteps[bucketIndex] = (bucketSteps[bucketIndex].toLong() + increment)
+        .coerceIn(0L, Int.MAX_VALUE.toLong())
+        .toInt()
+    }
+
+    return hourStarts.mapIndexed { index, hourStart ->
+      DeviceStepHourlyRecord(
+        hourStartIso = hourStart.toInstant().toString(),
+        label = hourStart.hour.toString().padStart(2, '0'),
+        steps = bucketSteps[index],
+        isCurrentHour = index == bucketCount - 1
+      )
+    }
+  }
+
+  private fun buildSnapshotSequence(
+    store: DeviceStepSnapshotStore,
+    startEpochMsInclusive: Long,
+    endEpochMsExclusive: Long,
+    additionalSnapshot: DeviceStepSnapshot? = null
+  ): List<DeviceStepSnapshot> {
+    val baseline = store.getLatestSnapshotBefore(startEpochMsInclusive)
+    val windowSnapshots = store.getSnapshotsBetween(startEpochMsInclusive, endEpochMsExclusive)
+
+    return buildList {
+      if (baseline != null) {
+        add(baseline)
+      }
+      addAll(windowSnapshots)
+      if (additionalSnapshot != null) {
+        val lastSnapshot = lastOrNull()
+        val isDuplicate = lastSnapshot != null &&
+          lastSnapshot.recordedAtEpochMs == additionalSnapshot.recordedAtEpochMs &&
+          lastSnapshot.elapsedRealtimeMs == additionalSnapshot.elapsedRealtimeMs &&
+          lastSnapshot.stepsSinceBoot == additionalSnapshot.stepsSinceBoot
+
+        if (!isDuplicate) {
+          add(additionalSnapshot)
+        }
+      }
+    }
   }
 
   private suspend fun ensureLiveUpdatesStarted() {
@@ -283,19 +385,20 @@ class DeviceStepCounterModule(
 
       try {
         val store = DeviceStepSnapshotStore(context)
-        val dailyRecord = try {
+        val (dailyRecord, hourlyRecords) = try {
           val latestSnapshot = store.getLatestSnapshot()
           if (shouldPersistLiveSnapshot(latestSnapshot, snapshot)) {
             store.insertSnapshot(snapshot)
           }
 
-          buildDailyRecord(store, epochMsToLocalDate(snapshot.recordedAtEpochMs), snapshot)
+          buildDailyRecord(store, epochMsToLocalDate(snapshot.recordedAtEpochMs), snapshot) to
+            buildHourlyRecords(store, STEP_TREND_WINDOW_HOURS, snapshot)
         } finally {
           store.close()
         }
 
         DeviceStepCounterStateStore.saveReadSuccess(context, toIsoInstant(snapshot.recordedAtEpochMs))
-        emitLiveStepUpdate(dailyRecord)
+        emitLiveStepUpdate(dailyRecord, hourlyRecords)
       } catch (error: Exception) {
         DeviceStepCounterStateStore.saveReadFailure(context, error.message ?: "Device step counter live update failed.")
       }
@@ -316,7 +419,7 @@ class DeviceStepCounterModule(
     return current.recordedAtEpochMs - previous.recordedAtEpochMs >= LIVE_SNAPSHOT_PERSIST_INTERVAL_MS
   }
 
-  private fun emitLiveStepUpdate(record: DeviceStepDailyRecord) {
+  private fun emitLiveStepUpdate(record: DeviceStepDailyRecord, hourlyRecords: List<DeviceStepHourlyRecord>) {
     if (!reactApplicationContext.hasActiveCatalystInstance()) {
       return
     }
@@ -327,6 +430,21 @@ class DeviceStepCounterModule(
       putString("sampledAt", record.sampledAtIso)
       putString("sourceDevice", resolveDeviceName())
       putString("sourceTimeZone", ZoneId.systemDefault().id)
+      putArray(
+        "stepTrend8h",
+        Arguments.createArray().apply {
+          hourlyRecords.forEach { hourlyRecord ->
+            pushMap(
+              Arguments.createMap().apply {
+                putString("hourStartIso", hourlyRecord.hourStartIso)
+                putString("label", hourlyRecord.label)
+                putInt("steps", hourlyRecord.steps)
+                putBoolean("isCurrentHour", hourlyRecord.isCurrentHour)
+              }
+            )
+          }
+        }
+      )
     }
 
     reactApplicationContext
@@ -342,6 +460,14 @@ class DeviceStepCounterModule(
     }
   }
 
+  private fun toHourStart(epochMs: Long, zoneId: ZoneId): ZonedDateTime {
+    return Instant.ofEpochMilli(epochMs)
+      .atZone(zoneId)
+      .withMinute(0)
+      .withSecond(0)
+      .withNano(0)
+  }
+
   private fun resolveDeviceName(): String {
     val manufacturer = Build.MANUFACTURER?.trim().orEmpty()
     val model = Build.MODEL?.trim().orEmpty()
@@ -354,6 +480,7 @@ class DeviceStepCounterModule(
   companion object {
     const val MODULE_NAME = "DeviceStepCounter"
     const val LIVE_UPDATE_EVENT_NAME = "deviceStepCounterLiveUpdate"
+    private const val STEP_TREND_WINDOW_HOURS = 8
     private const val LIVE_SNAPSHOT_PERSIST_INTERVAL_MS = 60_000L
   }
 }

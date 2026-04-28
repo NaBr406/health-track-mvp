@@ -1,15 +1,14 @@
 import { parseLeadingNumber } from "../../../lib/utils";
-import type { DashboardMetric, DashboardSnapshot, HealthProfile } from "../../../types";
+import type { DashboardMetric, DashboardSnapshot, HealthProfile, StepHourBucket } from "../../../types";
 import { buildGlucoseChart, getRecordedGlucoseHistory, hasGlucoseForecast, resolveForecastSourceLabel } from "./dashboardGlucoseChartModel";
-import type { MetricCardMeta } from "./dashboardModelTypes";
+import type { MetricCardMeta, StepInlineChartMeta } from "./dashboardModelTypes";
 
 const DEFAULT_CALORIE_TARGET = 1700;
 const DEFAULT_EXERCISE_TARGET = 40;
 const DEFAULT_STEP_TARGET = 8000;
+const STEP_CHART_EMPTY_LABEL = "连接设备后显示近 8 小时步数";
 
 export function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: HealthProfile | null, now: Date): MetricCardMeta[] {
-  // 这里把后端/本地快照转成纯 UI 模型，
-  // 避免 JSX 内部到处散落“取值 + 容错 + 格式化”逻辑。
   const calorieTarget = resolveCalorieTarget(healthProfile);
   const calorieValue = getMetricNumber(snapshot, "calories");
   const exerciseValue = getMetricNumber(snapshot, "exercise");
@@ -52,20 +51,48 @@ export function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfi
       unitText: "步",
       statusText: stepsValue >= DEFAULT_STEP_TARGET ? "已达到今日建议" : `还需 ${Math.max(DEFAULT_STEP_TARGET - stepsValue, 0)} 步`,
       helperText: stepsSource,
-      progress: clamp(stepsValue / DEFAULT_STEP_TARGET)
+      progress: clamp(stepsValue / DEFAULT_STEP_TARGET),
+      inlineChart: buildStepInlineChart(snapshot?.stepTrend8h)
     },
     {
       id: "glucose",
       label: hasForecast ? "血糖 8h 趋势" : "血糖趋势",
-      descriptor: hasGlucoseData ? (hasForecast ? resolveForecastSourceLabel(snapshot) : hasRecordedHistory ? "近 7 天实测记录" : "最新血糖记录") : "暂无血糖数据",
+      descriptor: hasGlucoseData
+        ? hasForecast
+          ? resolveForecastSourceLabel(snapshot)
+          : hasRecordedHistory
+            ? "近 7 天实测记录"
+            : "最新血糖记录"
+        : "暂无血糖数据",
       iconName: "pulse-outline",
       valueText: hasGlucoseData ? glucoseChart.currentValue.toFixed(1) : "--",
       unitText: "mmol/L",
       statusText: hasGlucoseData && snapshot?.glucoseRiskLevel ? `风险 ${snapshot.glucoseRiskLevel}` : hasGlucoseData ? "已展示实测相关曲线" : "暂无数据",
-      helperText: hasGlucoseData ? (snapshot?.calibrationApplied ? "已按最新实测值更新" : "") : "记录血糖后自动展示曲线",
+      helperText: hasGlucoseData ? (snapshot?.calibrationApplied ? "已按最新实测值更新" : "") : "记录血糖后自动显示曲线",
       chart: glucoseChart
     }
   ];
+}
+
+function buildStepInlineChart(stepTrend8h?: StepHourBucket[]): StepInlineChartMeta {
+  if (!stepTrend8h || stepTrend8h.length === 0) {
+    return {
+      kind: "empty",
+      emptyLabel: STEP_CHART_EMPTY_LABEL
+    };
+  }
+
+  const bars = stepTrend8h.map((bucket) => ({
+    label: bucket.label,
+    steps: bucket.steps,
+    isCurrentHour: bucket.isCurrentHour
+  }));
+
+  return {
+    kind: "bars",
+    bars,
+    maxSteps: Math.max(1, ...bars.map((bar) => bar.steps))
+  };
 }
 
 function resolveCalorieTarget(healthProfile: HealthProfile | null) {

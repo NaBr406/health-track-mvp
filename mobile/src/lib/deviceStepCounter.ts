@@ -1,5 +1,5 @@
 import { Linking, NativeEventEmitter, NativeModules, PermissionsAndroid, Platform } from "react-native";
-import type { AuthSession, DeviceStepCounterSyncState, StepSyncRecord } from "../types";
+import type { AuthSession, DeviceStepCounterSyncState, StepHourBucket, StepLiveUpdateRecord, StepSyncRecord } from "../types";
 import { loadDeviceStepCounterCache, saveDeviceStepCounterCache } from "./deviceStepCounterStorage";
 import { getTodayString } from "./utils";
 
@@ -21,6 +21,14 @@ type NativeDeviceStepCounterModule = {
       sampledAt?: string | null;
     }>
   >;
+  readRecentHourlyRecords(hours: number): Promise<
+    Array<{
+      hourStartIso?: string | null;
+      label?: string | null;
+      steps?: number | null;
+      isCurrentHour?: boolean | null;
+    }>
+  >;
   startLiveUpdates(): Promise<boolean>;
   stopLiveUpdates(): Promise<boolean>;
   addListener(eventName: string): void;
@@ -32,12 +40,22 @@ type ReadStepOptions = {
   endDate?: string;
 };
 
+type ReadHourlyStepOptions = {
+  hours?: number;
+};
+
 type DeviceStepCounterLiveUpdatePayload = {
   recordedOn?: string | null;
   steps?: number | null;
   sampledAt?: string | null;
   sourceDevice?: string | null;
   sourceTimeZone?: string | null;
+  stepTrend8h?: Array<{
+    hourStartIso?: string | null;
+    label?: string | null;
+    steps?: number | null;
+    isCurrentHour?: boolean | null;
+  }> | null;
 };
 
 const ACTIVITY_RECOGNITION_PERMISSION =
@@ -96,7 +114,29 @@ function getErrorMessage(error: unknown) {
   return "Device step counter request failed.";
 }
 
-function normalizeLiveUpdateRecord(payload: DeviceStepCounterLiveUpdatePayload): StepSyncRecord | null {
+function normalizeStepHourBucket(payload: {
+  hourStartIso?: string | null;
+  label?: string | null;
+  steps?: number | null;
+  isCurrentHour?: boolean | null;
+}): StepHourBucket | null {
+  const hourStartIso = typeof payload.hourStartIso === "string" && payload.hourStartIso.trim() ? payload.hourStartIso : null;
+  const label = typeof payload.label === "string" && payload.label.trim() ? payload.label : null;
+  const parsedSteps = typeof payload.steps === "number" ? payload.steps : Number(payload.steps);
+
+  if (!hourStartIso || !label || !Number.isFinite(parsedSteps)) {
+    return null;
+  }
+
+  return {
+    hourStartIso,
+    label,
+    steps: Math.max(0, Math.trunc(parsedSteps)),
+    isCurrentHour: Boolean(payload.isCurrentHour)
+  };
+}
+
+function normalizeLiveUpdateRecord(payload: DeviceStepCounterLiveUpdatePayload): StepLiveUpdateRecord | null {
   const recordedOn = typeof payload.recordedOn === "string" && payload.recordedOn.trim() ? payload.recordedOn : getTodayString();
   const parsedSteps = typeof payload.steps === "number" ? payload.steps : Number(payload.steps);
   if (!Number.isFinite(parsedSteps)) {
@@ -104,6 +144,9 @@ function normalizeLiveUpdateRecord(payload: DeviceStepCounterLiveUpdatePayload):
   }
 
   const sampledAt = typeof payload.sampledAt === "string" && payload.sampledAt.trim() ? payload.sampledAt : new Date().toISOString();
+  const stepTrend8h = Array.isArray(payload.stepTrend8h)
+    ? payload.stepTrend8h.map((record) => normalizeStepHourBucket(record)).filter((record): record is StepHourBucket => Boolean(record))
+    : [];
 
   return {
     recordedOn,
@@ -111,7 +154,8 @@ function normalizeLiveUpdateRecord(payload: DeviceStepCounterLiveUpdatePayload):
     source: DEVICE_STEP_COUNTER_SOURCE,
     sourceDevice: payload.sourceDevice ?? null,
     sourceTimeZone: payload.sourceTimeZone ?? resolveTimeZone(),
-    syncedAt: sampledAt
+    syncedAt: sampledAt,
+    stepTrend8h
   };
 }
 
@@ -321,6 +365,84 @@ export async function readDeviceStepCounterRecords(session?: AuthSession | null,
   }
 }
 
+export async function readRecentHourlyStepRecords(session?: AuthSession | null, options: ReadHourlyStepOptions = {}) {
+  const cache = await loadDeviceStepCounterCache(session);
+  const state = await refreshDeviceStepCounterState(session);
+
+  if (state.status !== "ready") {
+    return {
+      state,
+      records: [] as StepHourBucket[]
+    };
+  }
+
+  const module = getDeviceStepCounterModule();
+  if (!module) {
+    return {
+      state,
+      records: [] as StepHourBucket[]
+    };
+  }
+
+  const hours = options.hours ?? 8;
+
+  try {
+    const rawRecords = await module.readRecentHourlyRecords(hours);
+    const records = rawRecords
+      .map((record) => normalizeStepHourBucket(record))
+      .filter((record): record is StepHourBucket => Boolean(record));
+
+    const nextState = createState(
+      {
+        status: "ready",
+        sensorAvailable: true,
+        permissionsGranted: true,
+        backgroundSamplingEnabled: state.backgroundSamplingEnabled,
+        lastError: null,
+        sourceTimeZone: state.sourceTimeZone ?? resolveTimeZone()
+      },
+      state
+    );
+
+    await saveDeviceStepCounterCache(
+      {
+        state: nextState,
+        records: cache.records
+      },
+      session
+    );
+
+    return {
+      state: nextState,
+      records
+    };
+  } catch (error) {
+    const failedState = createState(
+      {
+        status: "error",
+        sensorAvailable: state.sensorAvailable,
+        permissionsGranted: state.permissionsGranted,
+        backgroundSamplingEnabled: state.backgroundSamplingEnabled,
+        lastError: getErrorMessage(error)
+      },
+      state
+    );
+
+    await saveDeviceStepCounterCache(
+      {
+        state: failedState,
+        records: cache.records
+      },
+      session
+    );
+
+    return {
+      state: failedState,
+      records: [] as StepHourBucket[]
+    };
+  }
+}
+
 export async function markDeviceStepCounterSyncSuccess(session: AuthSession | null | undefined, syncedDays: number) {
   const cache = await loadDeviceStepCounterCache(session);
   const state = createState(
@@ -357,7 +479,7 @@ export async function markDeviceStepCounterSyncFailure(session: AuthSession | nu
 
 export function subscribeDeviceStepCounterLiveUpdates(
   session: AuthSession | null | undefined,
-  onUpdate: (record: StepSyncRecord) => void,
+  onUpdate: (record: StepLiveUpdateRecord) => void,
   onError?: (error: unknown) => void
 ) {
   const module = getDeviceStepCounterModule();

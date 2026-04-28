@@ -17,8 +17,28 @@ export type MetricCardMeta = {
   statusText: string;
   helperText: string;
   progress?: number;
+  inlineChart?: StepInlineChartMeta;
   chart?: GlucoseChartMeta;
 };
+
+export type StepInlineChartBarMeta = {
+  label: string;
+  steps: number;
+  isCurrentHour: boolean;
+};
+
+export type StepInlineChartSeriesMeta = {
+  kind: "bars";
+  bars: StepInlineChartBarMeta[];
+  maxSteps: number;
+};
+
+export type StepInlineChartEmptyMeta = {
+  kind: "empty";
+  emptyLabel: string;
+};
+
+export type StepInlineChartMeta = StepInlineChartSeriesMeta | StepInlineChartEmptyMeta;
 
 export type GlucoseChartPoint = {
   label: string;
