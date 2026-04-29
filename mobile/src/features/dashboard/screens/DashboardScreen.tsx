@@ -31,6 +31,7 @@ type DashboardScreenProps = {
   healthProfile: HealthProfile | null;
   refreshToken: number;
   onOpenAdjustmentDetail: (snapshot: DashboardSnapshot) => void;
+  onOpenStepDetail: (snapshot: DashboardSnapshot) => void;
   onRequestSignIn: () => void;
 };
 
@@ -41,6 +42,7 @@ export function DashboardScreen({
   healthProfile,
   refreshToken,
   onOpenAdjustmentDetail,
+  onOpenStepDetail,
   onRequestSignIn
 }: DashboardScreenProps) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
@@ -163,7 +165,11 @@ export function DashboardScreen({
 
         <View style={styles.metricGrid}>
           {metricCards.map((metric) => (
-            <DashboardMetricCard key={metric.id} metric={metric} />
+            <DashboardMetricCard
+              key={metric.id}
+              metric={metric}
+              onPress={metric.id === "steps" && snapshot ? () => onOpenStepDetail(snapshot) : undefined}
+            />
           ))}
         </View>
 

@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { borders, colors, radii, shadows, spacing, typography } from "../../../theme/tokens";
 import type { MetricCardMeta } from "../model/dashboardScreenModel";
@@ -7,22 +7,48 @@ import { GlucoseLineChart } from "./GlucoseLineChart";
 
 type DashboardMetricCardProps = {
   metric: MetricCardMeta;
+  onPress?: () => void;
 };
 
-export function DashboardMetricCard({ metric }: DashboardMetricCardProps) {
-  return metric.chart ? <GlucoseMetricCard metric={metric} /> : <RingMetricCard metric={metric} />;
+export function DashboardMetricCard({ metric, onPress }: DashboardMetricCardProps) {
+  return metric.chart ? <GlucoseMetricCard metric={metric} /> : <RingMetricCard metric={metric} onPress={onPress} />;
 }
 
-function RingMetricCard({ metric }: DashboardMetricCardProps) {
-  return (
-    <View style={[styles.metricCard, metric.inlineChart ? styles.metricCardWithInlineChart : null]}>
-      <MetricCardHeader metric={metric} />
+function RingMetricCard({ metric, onPress }: DashboardMetricCardProps) {
+  const content = (
+    <>
+      <MetricCardHeader metric={metric} showChevron={Boolean(onPress)} />
       <View style={styles.metricBody}>
         <MetricValueBlock metric={metric} />
-        {metric.inlineChart ? <StepInlineChart chart={metric.inlineChart} /> : <View style={styles.metricRingRow}><CircularProgressRing progress={metric.progress ?? 0} /></View>}
+        {metric.inlineChart ? (
+          <StepInlineChart chart={metric.inlineChart} />
+        ) : (
+          <View style={styles.metricRingRow}>
+            <CircularProgressRing progress={metric.progress ?? 0} />
+          </View>
+        )}
       </View>
-    </View>
+    </>
   );
+
+  if (onPress) {
+    return (
+      <Pressable
+        accessibilityHint="打开步数详情"
+        accessibilityRole="button"
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.metricCard,
+          metric.inlineChart ? styles.metricCardWithInlineChart : null,
+          pressed ? styles.metricCardPressed : null
+        ]}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+
+  return <View style={[styles.metricCard, metric.inlineChart ? styles.metricCardWithInlineChart : null]}>{content}</View>;
 }
 
 function GlucoseMetricCard({ metric }: DashboardMetricCardProps) {
@@ -56,16 +82,23 @@ function GlucoseMetricCard({ metric }: DashboardMetricCardProps) {
   );
 }
 
-function MetricCardHeader({ metric }: DashboardMetricCardProps) {
+function MetricCardHeader({ metric, showChevron = false }: { metric: MetricCardMeta; showChevron?: boolean }) {
   return (
     <View style={styles.metricHeader}>
-      <View style={styles.metricIconWrap}>
-        <Ionicons color={colors.primary} name={metric.iconName} size={17} />
+      <View style={styles.metricHeaderLeading}>
+        <View style={styles.metricIconWrap}>
+          <Ionicons color={colors.primary} name={metric.iconName} size={17} />
+        </View>
+        <View style={styles.metricHeaderCopy}>
+          <Text style={styles.metricLabel}>{metric.label}</Text>
+          <Text style={styles.metricDescriptor}>{metric.descriptor}</Text>
+        </View>
       </View>
-      <View style={styles.metricHeaderCopy}>
-        <Text style={styles.metricLabel}>{metric.label}</Text>
-        <Text style={styles.metricDescriptor}>{metric.descriptor}</Text>
-      </View>
+      {showChevron ? (
+        <View style={styles.metricChevronWrap}>
+          <Ionicons color={colors.textSoft} name="chevron-forward" size={16} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -198,13 +231,28 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     ...shadows.card
   },
+  metricCardPressed: {
+    opacity: 0.92,
+    transform: [{ scale: 0.995 }]
+  },
   metricCardWithInlineChart: {
     minHeight: 224
   },
   metricHeader: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm
+  },
+  metricHeaderLeading: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
     gap: spacing.md
+  },
+  metricChevronWrap: {
+    width: 24,
+    alignItems: "flex-end"
   },
   metricIconWrap: {
     width: 36,

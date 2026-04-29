@@ -171,6 +171,63 @@ class DeviceStepCounterModule(
   }
 
   @ReactMethod
+  fun readHourlyRecordsForDate(date: String?, promise: Promise) {
+    moduleScope.launch {
+      try {
+        val context = reactApplicationContext
+        if (!isStepCounterSensorAvailable(context) || !hasActivityRecognitionPermission(context)) {
+          promise.resolve(Arguments.createArray())
+          return@launch
+        }
+
+        DeviceStepCounterScheduler.ensureScheduled(context)
+
+        val zoneId = ZoneId.systemDefault()
+        val targetDate = date?.takeIf { it.isNotBlank() }?.let(::parseLocalDate) ?: LocalDate.now(zoneId)
+        val reader = DeviceStepCounterReader(context)
+        val store = DeviceStepSnapshotStore(context)
+
+        try {
+          val additionalSnapshot = if (targetDate == LocalDate.now(zoneId)) {
+            try {
+              reader.captureSnapshot().also { snapshot ->
+                store.insertSnapshot(snapshot)
+                DeviceStepCounterStateStore.saveReadSuccess(context, toIsoInstant(snapshot.recordedAtEpochMs))
+              }
+            } catch (captureError: Exception) {
+              DeviceStepCounterStateStore.saveReadFailure(context, captureError.message ?: "Device step counter read failed.")
+              null
+            }
+          } else {
+            null
+          }
+
+          store.pruneOlderThan(System.currentTimeMillis() - TimeUnit.DAYS.toMillis(35))
+          val records = buildHourlyRecordsForDate(store, targetDate, additionalSnapshot)
+          val payload = Arguments.createArray()
+
+          records.forEach { record ->
+            payload.pushMap(
+              Arguments.createMap().apply {
+                putString("hourStartIso", record.hourStartIso)
+                putString("label", record.label)
+                putInt("steps", record.steps)
+                putBoolean("isCurrentHour", record.isCurrentHour)
+              }
+            )
+          }
+
+          promise.resolve(payload)
+        } finally {
+          store.close()
+        }
+      } catch (error: Exception) {
+        promise.reject("E_DEVICE_STEP_COUNTER_HOURLY_BY_DATE", error.message, error)
+      }
+    }
+  }
+
+  @ReactMethod
   fun startLiveUpdates(promise: Promise) {
     moduleScope.launch {
       try {
@@ -293,6 +350,55 @@ class DeviceStepCounterModule(
         label = hourStart.hour.toString().padStart(2, '0'),
         steps = bucketSteps[index],
         isCurrentHour = index == bucketCount - 1
+      )
+    }
+  }
+
+  private fun buildHourlyRecordsForDate(
+    store: DeviceStepSnapshotStore,
+    date: LocalDate,
+    additionalSnapshot: DeviceStepSnapshot? = null
+  ): List<DeviceStepHourlyRecord> {
+    val zoneId = ZoneId.systemDefault()
+    val hourStarts = List(24) { index ->
+      date.atStartOfDay(zoneId).plusHours(index.toLong())
+    }
+    val windowStartEpochMs = hourStarts.first().toInstant().toEpochMilli()
+    val windowEndEpochMs = date.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+    val sequence = buildSnapshotSequence(store, windowStartEpochMs, windowEndEpochMs, additionalSnapshot)
+
+    if (sequence.size < 2) {
+      return emptyList()
+    }
+
+    val currentHourStartEpochMs = toHourStart(additionalSnapshot?.recordedAtEpochMs ?: System.currentTimeMillis(), zoneId)
+      .toInstant()
+      .toEpochMilli()
+    val isToday = date == LocalDate.now(zoneId)
+    val hourIndexByStartEpochMs = hourStarts
+      .mapIndexed { index, hourStart -> hourStart.toInstant().toEpochMilli() to index }
+      .toMap()
+    val bucketSteps = IntArray(hourStarts.size)
+
+    sequence.zipWithNext().forEach { (previous, current) ->
+      val increment = resolveStepIncrement(previous, current)
+        .coerceIn(0L, Int.MAX_VALUE.toLong())
+        .toInt()
+      val bucketStartEpochMs = toHourStart(current.recordedAtEpochMs, zoneId).toInstant().toEpochMilli()
+      val bucketIndex = hourIndexByStartEpochMs[bucketStartEpochMs] ?: return@forEach
+
+      bucketSteps[bucketIndex] = (bucketSteps[bucketIndex].toLong() + increment)
+        .coerceIn(0L, Int.MAX_VALUE.toLong())
+        .toInt()
+    }
+
+    return hourStarts.mapIndexed { index, hourStart ->
+      val hourStartEpochMs = hourStart.toInstant().toEpochMilli()
+      DeviceStepHourlyRecord(
+        hourStartIso = hourStart.toInstant().toString(),
+        label = hourStart.hour.toString().padStart(2, '0'),
+        steps = bucketSteps[index],
+        isCurrentHour = isToday && hourStartEpochMs == currentHourStartEpochMs
       )
     }
   }

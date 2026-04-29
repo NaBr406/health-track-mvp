@@ -5,6 +5,7 @@
   markDeviceStepCounterSyncSuccess,
   openDeviceStepCounterSettings as openDeviceStepCounterSettingsApp,
   readDeviceStepCounterRecords,
+  readHourlyStepRecordsForDate,
   readRecentHourlyStepRecords,
   refreshDeviceStepCounterState,
   requestDeviceStepCounterPermission
@@ -80,6 +81,11 @@ export async function getMergedLocalStepRecords(session?: AuthSession | null, fo
 
 export async function getRecentHourlyStepTrend(session?: AuthSession | null) {
   const deviceStepCounter = await readRecentHourlyStepRecords(session, { hours: 8 });
+  return deviceStepCounter.state.status === "ready" ? deviceStepCounter.records : ([] as StepHourBucket[]);
+}
+
+export async function getHourlyStepTrendForDate(session: AuthSession | null | undefined, date: string) {
+  const deviceStepCounter = await readHourlyStepRecordsForDate(session, { date });
   return deviceStepCounter.state.status === "ready" ? deviceStepCounter.records : ([] as StepHourBucket[]);
 }
 
@@ -185,6 +191,8 @@ function openDeviceStepCounterSettings() {
 
 export const deviceStepCounterApi = {
   connectDeviceStepCounter,
+  getHourlyStepTrendForDate,
+  getRecentHourlyStepTrend,
   getDeviceStepCounterSyncStatus,
   openDeviceStepCounterSettings,
   syncDeviceStepCounter,

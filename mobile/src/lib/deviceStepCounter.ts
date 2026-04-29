@@ -29,6 +29,14 @@ type NativeDeviceStepCounterModule = {
       isCurrentHour?: boolean | null;
     }>
   >;
+  readHourlyRecordsForDate(date: string): Promise<
+    Array<{
+      hourStartIso?: string | null;
+      label?: string | null;
+      steps?: number | null;
+      isCurrentHour?: boolean | null;
+    }>
+  >;
   startLiveUpdates(): Promise<boolean>;
   stopLiveUpdates(): Promise<boolean>;
   addListener(eventName: string): void;
@@ -42,6 +50,10 @@ type ReadStepOptions = {
 
 type ReadHourlyStepOptions = {
   hours?: number;
+};
+
+type ReadHourlyStepByDateOptions = {
+  date: string;
 };
 
 type DeviceStepCounterLiveUpdatePayload = {
@@ -388,6 +400,82 @@ export async function readRecentHourlyStepRecords(session?: AuthSession | null, 
 
   try {
     const rawRecords = await module.readRecentHourlyRecords(hours);
+    const records = rawRecords
+      .map((record) => normalizeStepHourBucket(record))
+      .filter((record): record is StepHourBucket => Boolean(record));
+
+    const nextState = createState(
+      {
+        status: "ready",
+        sensorAvailable: true,
+        permissionsGranted: true,
+        backgroundSamplingEnabled: state.backgroundSamplingEnabled,
+        lastError: null,
+        sourceTimeZone: state.sourceTimeZone ?? resolveTimeZone()
+      },
+      state
+    );
+
+    await saveDeviceStepCounterCache(
+      {
+        state: nextState,
+        records: cache.records
+      },
+      session
+    );
+
+    return {
+      state: nextState,
+      records
+    };
+  } catch (error) {
+    const failedState = createState(
+      {
+        status: "error",
+        sensorAvailable: state.sensorAvailable,
+        permissionsGranted: state.permissionsGranted,
+        backgroundSamplingEnabled: state.backgroundSamplingEnabled,
+        lastError: getErrorMessage(error)
+      },
+      state
+    );
+
+    await saveDeviceStepCounterCache(
+      {
+        state: failedState,
+        records: cache.records
+      },
+      session
+    );
+
+    return {
+      state: failedState,
+      records: [] as StepHourBucket[]
+    };
+  }
+}
+
+export async function readHourlyStepRecordsForDate(session: AuthSession | null | undefined, options: ReadHourlyStepByDateOptions) {
+  const cache = await loadDeviceStepCounterCache(session);
+  const state = await refreshDeviceStepCounterState(session);
+
+  if (state.status !== "ready") {
+    return {
+      state,
+      records: [] as StepHourBucket[]
+    };
+  }
+
+  const module = getDeviceStepCounterModule();
+  if (!module) {
+    return {
+      state,
+      records: [] as StepHourBucket[]
+    };
+  }
+
+  try {
+    const rawRecords = await module.readHourlyRecordsForDate(options.date);
     const records = rawRecords
       .map((record) => normalizeStepHourBucket(record))
       .filter((record): record is StepHourBucket => Boolean(record));

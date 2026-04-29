@@ -12,6 +12,7 @@ import { ClinicalTabBar } from "../components/ClinicalTabBar";
 import { AIChatScreen } from "../features/chat/screens/AIChatScreen";
 import { AdjustmentDetailScreen } from "../features/dashboard/screens/AdjustmentDetailScreen";
 import { DashboardScreen } from "../features/dashboard/screens/DashboardScreen";
+import { StepDetailScreen } from "../features/dashboard/screens/StepDetailScreen";
 import { ProfileDetailScreen } from "../features/profile/screens/ProfileDetailScreen";
 import { ProfileScreen } from "../features/profile/screens/ProfileScreen";
 import { ProfileSettingsScreen } from "../features/profile/screens/ProfileSettingsScreen";
@@ -29,6 +30,9 @@ export type MainTabParamList = {
 export type DashboardStackParamList = {
   DashboardHome: undefined;
   AdjustmentDetail: {
+    snapshot: DashboardSnapshot;
+  };
+  StepDetail: {
     snapshot: DashboardSnapshot;
   };
 };
@@ -90,6 +94,7 @@ function DashboardStackNavigator({
           <DashboardScreen
             healthProfile={healthProfile}
             onOpenAdjustmentDetail={(snapshot) => screenProps.navigation.navigate("AdjustmentDetail", { snapshot })}
+            onOpenStepDetail={(snapshot) => screenProps.navigation.navigate("StepDetail", { snapshot })}
             onRequestSignIn={onRequestSignIn}
             refreshToken={refreshToken}
             session={session}
@@ -97,6 +102,9 @@ function DashboardStackNavigator({
         )}
       </DashboardStack.Screen>
       <DashboardStack.Screen component={AdjustmentDetailScreen} name="AdjustmentDetail" />
+      <DashboardStack.Screen name="StepDetail">
+        {(screenProps) => <StepDetailScreen {...screenProps} healthProfile={healthProfile} session={session} />}
+      </DashboardStack.Screen>
     </DashboardStack.Navigator>
   );
 }
