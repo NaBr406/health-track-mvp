@@ -61,6 +61,8 @@ export function StepDetailScreen({ healthProfile, navigation, route, session }: 
   const { snapshot } = route.params;
   const { width: windowWidth } = useWindowDimensions();
   const listRef = useRef<FlatList<StepDetailDay> | null>(null);
+  const dayListSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isSyncingDayListRef = useRef(false);
   const initialDays = buildInitialStepDays(snapshot, healthProfile);
   const initialIndex = Math.max(0, initialDays.findIndex((day) => day.date === snapshot.focusDate));
   const [days, setDays] = useState<StepDetailDay[]>(initialDays);
@@ -110,8 +112,28 @@ export function StepDetailScreen({ healthProfile, navigation, route, session }: 
     }
 
     const nextIndex = Math.max(0, days.findIndex((day) => day.date === activeDate));
+    isSyncingDayListRef.current = true;
     listRef.current?.scrollToIndex({ animated: false, index: nextIndex });
+
+    if (dayListSyncTimerRef.current) {
+      clearTimeout(dayListSyncTimerRef.current);
+    }
+
+    dayListSyncTimerRef.current = setTimeout(() => {
+      isSyncingDayListRef.current = false;
+      dayListSyncTimerRef.current = null;
+    }, 120);
   }, [activeDate, days, mode]);
+
+  useEffect(
+    () => () => {
+      if (dayListSyncTimerRef.current) {
+        clearTimeout(dayListSyncTimerRef.current);
+        dayListSyncTimerRef.current = null;
+      }
+    },
+    []
+  );
 
   const dateOptions = useMemo(
     () =>
@@ -181,6 +203,10 @@ export function StepDetailScreen({ healthProfile, navigation, route, session }: 
           initialScrollIndex={initialIndex}
           keyExtractor={(item) => item.date}
           onMomentumScrollEnd={(event) => {
+            if (isSyncingDayListRef.current) {
+              return;
+            }
+
             const nextIndex = Math.round(event.nativeEvent.contentOffset.x / Math.max(pageWidth, 1));
             setActiveDate(days[Math.min(Math.max(nextIndex, 0), Math.max(days.length - 1, 0))]?.date ?? snapshot.focusDate);
           }}
