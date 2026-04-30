@@ -1,12 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useEffect, useRef, useState } from "react";
-import { FlatList, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { MonoValue, Panel, SectionHeader } from "../../../components/clinical";
-import { formatDisplayDate, formatShortDate, getTodayString, parseLeadingNumber } from "../../../lib/utils";
+import { parseLeadingNumber } from "../../../lib/utils";
 import type { DashboardStackParamList } from "../../../navigation/MainTabsNavigator";
-import { borders, colors, layout, radii, spacing, typography } from "../../../theme/tokens";
+import { borders, colors, layout, radii, shadows, spacing, typography } from "../../../theme/tokens";
 import type { AuthSession, DashboardSnapshot, HealthProfile, StepHourBucket, StepSyncRecord } from "../../../types";
 import {
   getHourlyStepTrendForDate,
@@ -19,42 +18,72 @@ type StepDetailScreenProps = NativeStackScreenProps<DashboardStackParamList, "St
   healthProfile: HealthProfile | null;
 };
 
+type StepDetailMode = "day" | "week" | "month";
+
 type StepDetailDay = {
   date: string;
   totalSteps: number;
   sourceLabel: string;
   walkingKcal: number;
+  distanceKm: number;
   hourlyBuckets: StepHourBucket[];
 };
+
+type SummaryBarPoint = {
+  key: string;
+  label: string;
+  value: number;
+  selected: boolean;
+};
+
+type PeriodOverview = {
+  totalSteps: number;
+  distanceKm: number;
+  walkingKcal: number;
+  helperText: string;
+  periodLabel: string;
+  overviewTitle: string;
+  averageSteps: number;
+  averageDistanceKm: number;
+};
+
+const MODE_LABELS: Array<{ key: StepDetailMode; label: string }> = [
+  { key: "day", label: "日" },
+  { key: "week", label: "周" },
+  { key: "month", label: "月" }
+];
+
+const CHART_Y_TICKS = [0, 400, 800, 1200, 1600, 2000];
+const DAY_CHART_HEIGHT = 220;
+const SUMMARY_CHART_HEIGHT = 200;
 
 export function StepDetailScreen({ healthProfile, navigation, route, session }: StepDetailScreenProps) {
   const { snapshot } = route.params;
   const { width: windowWidth } = useWindowDimensions();
   const listRef = useRef<FlatList<StepDetailDay> | null>(null);
-  const initialIndexRef = useRef(
-    Math.max(0, buildInitialStepDays(snapshot, healthProfile).findIndex((day) => day.date === snapshot.focusDate))
-  );
-  const [days, setDays] = useState<StepDetailDay[]>(() => buildInitialStepDays(snapshot, healthProfile));
+  const initialDays = buildInitialStepDays(snapshot, healthProfile);
+  const initialIndex = Math.max(0, initialDays.findIndex((day) => day.date === snapshot.focusDate));
+  const [days, setDays] = useState<StepDetailDay[]>(initialDays);
   const [activeDate, setActiveDate] = useState(snapshot.focusDate);
+  const [mode, setMode] = useState<StepDetailMode>("day");
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
 
   const pageWidth = windowWidth;
-  const activeIndex = Math.max(
-    0,
-    days.findIndex((day) => day.date === activeDate)
-  );
+  const activeIndex = Math.max(0, days.findIndex((day) => day.date === activeDate));
   const activeDay = days[activeIndex] ?? days[days.length - 1] ?? null;
 
   useEffect(() => {
     const nextDays = buildInitialStepDays(snapshot, healthProfile);
     setDays(nextDays);
     setActiveDate(snapshot.focusDate);
+    setMode("day");
   }, [healthProfile?.heightCm, healthProfile?.weightKg, snapshot]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadStepDetailDays() {
-      const localRecords = await getMergedLocalStepRecords(session, snapshot.focusDate).catch(() => [] as StepSyncRecord[]);
+      const localRecords = await getMergedLocalStepRecords(session, snapshot.focusDate, 31).catch(() => [] as StepSyncRecord[]);
       const dates = buildDateWindow(snapshot, localRecords);
       const hourlyEntries = await Promise.all(
         dates.map(async (date) => [date, await getHourlyStepTrendForDate(session, date).catch(() => [] as StepHourBucket[])] as const)
@@ -76,200 +105,447 @@ export function StepDetailScreen({ healthProfile, navigation, route, session }: 
   }, [healthProfile?.heightCm, healthProfile?.weightKg, session, snapshot]);
 
   useEffect(() => {
-    if (days.length === 0) {
+    if (mode !== "day" || days.length === 0) {
       return;
     }
 
-    const nextIndex = Math.max(
-      0,
-      days.findIndex((day) => day.date === activeDate)
-    );
+    const nextIndex = Math.max(0, days.findIndex((day) => day.date === activeDate));
     listRef.current?.scrollToIndex({ animated: false, index: nextIndex });
-  }, [activeDate, days]);
+  }, [activeDate, days, mode]);
+
+  const dateOptions = useMemo(
+    () =>
+      [...days]
+        .sort((left, right) => right.date.localeCompare(left.date))
+        .map((day) => ({
+          date: day.date,
+          title: formatHeaderDate(day.date),
+          subtitle: `${day.totalSteps} 步`
+        })),
+    [days]
+  );
+
+  const headerDateLabel = useMemo(() => buildHeaderDateLabel(activeDate, mode), [activeDate, mode]);
+  const chartData = useMemo(() => buildSummaryChartData(days, activeDate, mode), [days, activeDate, mode]);
+  const overviewValues = useMemo(() => buildOverviewValues(days, activeDate, mode), [days, activeDate, mode]);
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safeArea}>
       <View style={styles.headerShell}>
         <View style={styles.headerRow}>
-          <Pressable accessibilityRole="button" onPress={() => navigation.goBack()} style={({ pressed }) => [styles.backButton, pressed ? styles.backButtonPressed : null]}>
-            <Ionicons color={colors.text} name="chevron-back" size={22} />
+          <Pressable accessibilityRole="button" onPress={() => navigation.goBack()} style={({ pressed }) => [styles.iconButton, pressed ? styles.iconButtonPressed : null]}>
+            <Ionicons color={colors.text} name="arrow-back" size={22} />
           </Pressable>
-          <Text style={styles.headerTitle}>步数详情</Text>
-          <View style={styles.headerSpacer} />
+          <View style={styles.headerCopy}>
+            <Text style={styles.headerTitle}>步数</Text>
+            <Pressable
+              accessibilityRole="button"
+            onPress={() => setDatePickerVisible(true)}
+            style={({ pressed }) => [styles.headerDateButton, pressed ? styles.headerDateButtonPressed : null]}
+          >
+              <Text style={styles.headerDate}>{headerDateLabel}</Text>
+              <Ionicons color={colors.textSoft} name="chevron-down" size={16} />
+            </Pressable>
+          </View>
+          <View style={styles.headerRightSpacer} />
         </View>
 
-        {activeDay ? (
-          <View style={styles.heroBlock}>
-            <Text style={styles.heroEyebrow}>{formatDisplayDate(activeDay.date)}</Text>
-            <Text style={styles.heroTitle}>{activeDay.date === getTodayString() ? "今日步数分布" : "近几日步数回看"}</Text>
-            <Text style={styles.heroDescription}>左右滑动查看近几日步数、全天时段分布和步行消耗估算。</Text>
-            <View style={styles.pageIndicatorRow}>
-              {days.map((day) => (
-                <View
-                  key={day.date}
-                  style={[styles.pageIndicatorDot, day.date === activeDay.date ? styles.pageIndicatorDotActive : null]}
-                />
-              ))}
-            </View>
-          </View>
-        ) : null}
+        <View style={styles.segmentedControl}>
+          {MODE_LABELS.map((item) => {
+            const selected = mode === item.key;
+            return (
+              <Pressable
+                key={item.key}
+                accessibilityRole="button"
+                onPress={() => setMode(item.key)}
+                style={({ pressed }) => [
+                  styles.segmentItem,
+                  selected ? styles.segmentItemActive : null,
+                  pressed ? styles.segmentItemPressed : null
+                ]}
+              >
+                <Text style={[styles.segmentLabel, selected ? styles.segmentLabelActive : null]}>{item.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
 
-      <FlatList
-        ref={listRef}
-        data={days}
-        decelerationRate="fast"
-        getItemLayout={(_, index) => ({ index, length: pageWidth, offset: pageWidth * index })}
-        horizontal
-        initialScrollIndex={initialIndexRef.current}
-        keyExtractor={(item) => item.date}
-        onMomentumScrollEnd={(event) => {
-          const nextIndex = Math.round(event.nativeEvent.contentOffset.x / Math.max(pageWidth, 1));
-          setActiveDate(days[Math.min(Math.max(nextIndex, 0), Math.max(days.length - 1, 0))]?.date ?? snapshot.focusDate);
+      {mode === "day" ? (
+        <FlatList
+          ref={listRef}
+          data={days}
+          decelerationRate="fast"
+          getItemLayout={(_, index) => ({ index, length: pageWidth, offset: pageWidth * index })}
+          horizontal
+          initialScrollIndex={initialIndex}
+          keyExtractor={(item) => item.date}
+          onMomentumScrollEnd={(event) => {
+            const nextIndex = Math.round(event.nativeEvent.contentOffset.x / Math.max(pageWidth, 1));
+            setActiveDate(days[Math.min(Math.max(nextIndex, 0), Math.max(days.length - 1, 0))]?.date ?? snapshot.focusDate);
+          }}
+          pagingEnabled
+          renderItem={({ item }) => <StepDayPage day={item} pageWidth={pageWidth} />}
+          showsHorizontalScrollIndicator={false}
+          style={styles.pageList}
+        />
+      ) : (
+        <ScrollView contentContainerStyle={styles.summaryPageContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.heroMetricsBlock}>
+            <View style={styles.heroStepLine}>
+              <Text style={styles.heroStepValue}>{`${overviewValues.totalSteps}`}</Text>
+              <Text style={styles.heroStepUnit}>步</Text>
+            </View>
+            <Text style={styles.heroMetricDate}>{overviewValues.periodLabel}</Text>
+            <Text style={styles.heroSourceText}>{overviewValues.helperText}</Text>
+          </View>
+
+          <View style={styles.chartCard}>
+            <View style={styles.sectionHeaderRow}>
+              <View>
+                <Text style={styles.sectionEyebrow}>{mode === "week" ? "近 7 天" : "近 31 天"}</Text>
+                <Text style={styles.sectionTitle}>{mode === "week" ? "每日步数趋势" : "月度步数趋势"}</Text>
+              </View>
+              <Text style={styles.sectionHint}>点击日期可切换锚点</Text>
+            </View>
+            <StepSummaryBarChart points={chartData} mode={mode} />
+          </View>
+
+          <OverviewCard
+            averageDistanceKm={overviewValues.averageDistanceKm}
+            averageSteps={overviewValues.averageSteps}
+            helperText={overviewValues.helperText}
+            walkingKcal={overviewValues.walkingKcal}
+            distanceKm={overviewValues.distanceKm}
+            totalSteps={overviewValues.totalSteps}
+            title={overviewValues.overviewTitle}
+            showAverages
+          />
+        </ScrollView>
+      )}
+
+      <DatePickerSheet
+        activeDate={activeDate}
+        onClose={() => setDatePickerVisible(false)}
+        onSelect={(date) => {
+          setActiveDate(date);
+          setDatePickerVisible(false);
         }}
-        pagingEnabled
-        renderItem={({ item }) => <StepDetailPage day={item} healthProfile={healthProfile} pageWidth={pageWidth} />}
-        showsHorizontalScrollIndicator={false}
-        style={styles.pageList}
+        options={dateOptions}
+        visible={datePickerVisible}
       />
     </SafeAreaView>
   );
 }
 
-function StepDetailPage({
+function StepDayPage({
   day,
-  healthProfile,
   pageWidth
 }: {
   day: StepDetailDay;
-  healthProfile: HealthProfile | null;
   pageWidth: number;
 }) {
-  const peakHour = getPeakHour(day.hourlyBuckets);
-  const activeHours = day.hourlyBuckets.filter((bucket) => bucket.steps > 0).length;
-
   return (
     <ScrollView
-      contentContainerStyle={[styles.pageContent, { width: pageWidth, paddingBottom: layout.pageBottom + spacing.xxl }]}
+      contentContainerStyle={[styles.pageContent, { width: pageWidth }]}
       showsVerticalScrollIndicator={false}
       style={{ width: pageWidth }}
     >
-      <Panel>
-        <SectionHeader
-          eyebrow={day.date === getTodayString() ? "今天" : formatShortDate(day.date)}
-          title={formatDisplayDate(day.date)}
-          description={`来源：${day.sourceLabel}`}
-        />
-        <View style={styles.summaryGrid}>
-          <SummaryCard label="总步数" value={`${day.totalSteps}`} unit="步" helper="当天累计" />
-          <SummaryCard label="步行消耗" value={`${day.walkingKcal}`} unit="kcal" helper="按步数估算" />
-          <SummaryCard label="活跃小时" value={day.hourlyBuckets.length > 0 ? `${activeHours}` : "--"} unit={day.hourlyBuckets.length > 0 ? "h" : undefined} helper="有步数记录的小时" />
-          <SummaryCard
-            label="最高时段"
-            value={peakHour ? peakHour.label : "--"}
-            unit={peakHour ? `· ${peakHour.steps} 步` : undefined}
-            helper="单小时峰值"
-          />
+      <View style={styles.heroMetricsBlock}>
+        <View style={styles.heroStepLine}>
+          <Text style={styles.heroStepValue}>{`${day.totalSteps}`}</Text>
+          <Text style={styles.heroStepUnit}>步</Text>
         </View>
-        <Text style={styles.summaryNote}>{buildWalkingEstimateNote(day.totalSteps, healthProfile)}</Text>
-      </Panel>
+        <Text style={styles.heroMetricDate}>{formatHeaderDate(day.date)}</Text>
+        <Text style={styles.heroSourceText}>{day.sourceLabel}</Text>
+      </View>
 
-      <Panel>
-        <SectionHeader eyebrow="全天时段步数" title="24 小时分布" description="查看这一天从 00:00 到 23:00 的逐小时步数。" />
+      <View style={styles.chartCard}>
+        <View style={styles.sectionHeaderRow}>
+          <View>
+            <Text style={styles.sectionEyebrow}>全天步数</Text>
+            <Text style={styles.sectionTitle}>24 小时时段分布</Text>
+          </View>
+          <Text style={styles.sectionHint}>左右滑动切换日期</Text>
+        </View>
         <StepDayBarChart buckets={day.hourlyBuckets} />
-      </Panel>
+      </View>
+
+      <OverviewCard
+        helperText={day.sourceLabel}
+        walkingKcal={day.walkingKcal}
+        distanceKm={day.distanceKm}
+        totalSteps={day.totalSteps}
+      />
     </ScrollView>
   );
 }
 
-function SummaryCard({ helper, label, unit, value }: { label: string; value: string; unit?: string; helper: string }) {
+function OverviewCard({
+  averageDistanceKm,
+  averageSteps,
+  helperText,
+  walkingKcal,
+  distanceKm,
+  totalSteps,
+  title,
+  showAverages = false
+}: {
+  totalSteps: number;
+  distanceKm: number;
+  walkingKcal: number;
+  helperText: string;
+  averageSteps?: number;
+  averageDistanceKm?: number;
+  title?: string;
+  showAverages?: boolean;
+}) {
   return (
-    <View style={styles.summaryCard}>
-      <Text style={styles.summaryLabel}>{label}</Text>
-      <MonoValue unit={unit} value={value} />
-      <Text style={styles.summaryHelper}>{helper}</Text>
+    <View style={styles.overviewCard}>
+      <View style={styles.overviewHeader}>
+        <View style={styles.overviewIconWrap}>
+          <Ionicons color={colors.primary} name="eye-outline" size={18} />
+        </View>
+        <Text style={styles.overviewTitle}>{title ?? "今日概览"}</Text>
+      </View>
+
+      <View style={styles.overviewDivider} />
+
+      <View style={styles.overviewStatsRow}>
+        <OverviewStat label={showAverages ? "总步数" : "今日步数"} unit="步" value={`${totalSteps}`} />
+        <View style={styles.overviewStatsSeparator} />
+        <OverviewStat label={showAverages ? "总距离" : "今日距离"} unit="公里" value={distanceKm.toFixed(2)} />
+      </View>
+
+      {showAverages ? (
+        <>
+          <View style={styles.overviewDivider} />
+          <View style={styles.overviewStatsRow}>
+            <OverviewStat label="日均步数" unit="步" value={`${averageSteps ?? 0}`} />
+            <View style={styles.overviewStatsSeparator} />
+            <OverviewStat label="日均距离" unit="公里" value={(averageDistanceKm ?? 0).toFixed(2)} />
+          </View>
+        </>
+      ) : (
+        <View style={styles.summaryMetaRow}>
+          <MetaPill label="步行消耗" value={`${walkingKcal} kcal`} />
+          <MetaPill label="数据来源" value={helperText} />
+        </View>
+      )}
     </View>
+  );
+}
+
+function OverviewStat({ label, unit, value }: { label: string; value: string; unit: string }) {
+  return (
+    <View style={styles.overviewStatBlock}>
+      <View style={styles.overviewValueLine}>
+        <Text style={styles.overviewValue}>{value}</Text>
+        <Text style={styles.overviewUnit}>{unit}</Text>
+      </View>
+      <Text style={styles.overviewLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function MetaPill({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.metaPill}>
+      <Text style={styles.metaPillLabel}>{label}</Text>
+      <Text numberOfLines={1} style={styles.metaPillValue}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function DatePickerSheet({
+  activeDate,
+  onClose,
+  onSelect,
+  options,
+  visible
+}: {
+  visible: boolean;
+  activeDate: string;
+  options: Array<{ date: string; title: string; subtitle: string }>;
+  onSelect: (date: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal animationType="fade" transparent visible={visible}>
+      <Pressable onPress={onClose} style={styles.modalBackdrop}>
+        <Pressable style={styles.dateSheet} onPress={() => undefined}>
+          <View style={styles.dateSheetHeader}>
+            <Text style={styles.dateSheetTitle}>选择日期</Text>
+            <Pressable accessibilityRole="button" onPress={onClose} style={({ pressed }) => [styles.dateSheetCloseButton, pressed ? styles.iconButtonPressed : null]}>
+              <Ionicons color={colors.textSoft} name="close" size={18} />
+            </Pressable>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} style={styles.dateSheetScroll}>
+            {options.map((option) => {
+              const selected = option.date === activeDate;
+              return (
+                <Pressable
+                  key={option.date}
+                  accessibilityRole="button"
+                  onPress={() => onSelect(option.date)}
+                  style={({ pressed }) => [
+                    styles.dateOption,
+                    selected ? styles.dateOptionActive : null,
+                    pressed ? styles.dateOptionPressed : null
+                  ]}
+                >
+                  <View style={styles.dateOptionCopy}>
+                    <Text style={[styles.dateOptionTitle, selected ? styles.dateOptionTitleActive : null]}>{option.title}</Text>
+                    <Text style={styles.dateOptionSubtitle}>{option.subtitle}</Text>
+                  </View>
+                  {selected ? <Ionicons color={colors.primary} name="checkmark-circle" size={18} /> : null}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
 function StepDayBarChart({ buckets }: { buckets: StepHourBucket[] }) {
-  if (buckets.length === 0) {
-    return (
-      <View style={styles.emptyChart}>
-        <View style={styles.dayChartRow}>
-          {Array.from({ length: 24 }, (_, index) => (
-            <View key={`ghost-${index}`} style={styles.dayChartColumn}>
-              <View style={styles.dayChartTrack}>
-                <View
-                  style={[
-                    styles.dayChartGhostFill,
-                    { height: `${18 + ((index % 6) + 1) * 8}%` }
-                  ]}
-                />
-              </View>
-              <Text style={styles.dayChartGhostLabel}>{index % 4 === 0 ? `${index}`.padStart(2, "0") : ""}</Text>
-            </View>
-          ))}
-        </View>
-        <Text style={styles.emptyChartTitle}>当前暂无小时级步数快照</Text>
-        <Text style={styles.emptyChartDescription}>连接设备并等待一段时间采样后，这里会展示当天各时段的步数分布。</Text>
-      </View>
-    );
-  }
-
-  const maxSteps = Math.max(1, ...buckets.map((bucket) => bucket.steps));
-  const hasCurrentHour = buckets.some((bucket) => bucket.isCurrentHour);
+  const chartBuckets = buckets.length > 0 ? buckets : buildEmptyChartBuckets();
+  const maxSteps = Math.max(1, ...chartBuckets.map((bucket) => bucket.steps));
+  const hasBars = buckets.length > 0;
 
   return (
-    <View style={styles.dayChartBlock}>
-      <View style={styles.dayChartRow}>
-        {buckets.map((bucket, index) => {
-          const height = bucket.steps > 0 ? Math.max((bucket.steps / maxSteps) * 100, 6) : 0;
-          const showLabel = index % 4 === 0 || bucket.isCurrentHour;
+    <View>
+      <View style={styles.chartShell}>
+        <View style={[styles.chartArea, { height: DAY_CHART_HEIGHT }]}>
+          {CHART_Y_TICKS.slice(1).map((tick) => {
+            const bottom = DAY_CHART_HEIGHT - (tick / 2000) * DAY_CHART_HEIGHT;
+            return <View key={tick} style={[styles.chartGridLine, { bottom }]} />;
+          })}
 
-          return (
-            <View key={bucket.hourStartIso} style={styles.dayChartColumn}>
-              <View style={styles.dayChartTrack}>
-                <View
-                  style={[
-                    styles.dayChartFill,
-                    bucket.isCurrentHour ? styles.dayChartFillCurrent : styles.dayChartFillPast,
-                    { height: `${height}%` }
-                  ]}
-                />
-              </View>
-              <Text style={[styles.dayChartLabel, bucket.isCurrentHour ? styles.dayChartLabelCurrent : null]}>{showLabel ? bucket.label : ""}</Text>
-            </View>
-          );
-        })}
+          <View style={styles.chartColumnsRow}>
+            {chartBuckets.map((bucket, index) => {
+              const height = bucket.steps > 0 ? Math.max((bucket.steps / maxSteps) * 100, 2.5) : 0;
+              return (
+                <View key={bucket.hourStartIso || `${bucket.label}-${index}`} style={styles.chartColumn}>
+                  {hasBars ? (
+                    <View
+                      style={[
+                        styles.chartBar,
+                        bucket.steps <= 0 ? styles.chartBarZero : null,
+                        { height: `${height}%` }
+                      ]}
+                    />
+                  ) : null}
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+        <View style={[styles.chartYAxis, { height: DAY_CHART_HEIGHT }]}>
+          {CHART_Y_TICKS.slice().reverse().map((tick) => (
+            <Text key={tick} style={styles.yAxisLabel}>
+              {tick.toLocaleString("en-US")}
+            </Text>
+          ))}
+        </View>
       </View>
-      <View style={styles.dayChartLegendRow}>
-        <LegendChip color="rgba(0, 82, 204, 0.40)" label="普通时段" />
-        {hasCurrentHour ? <LegendChip color={colors.primary} label="当前小时" /> : null}
+
+      <View style={styles.chartXAxis}>
+        {["00:00", "06:00", "12:00", "18:00", "00:00"].map((label) => (
+          <Text key={label} style={styles.xAxisLabel}>
+            {label}
+          </Text>
+        ))}
       </View>
     </View>
   );
 }
 
-function LegendChip({ color, label }: { color: string; label: string }) {
+function StepSummaryBarChart({ points, mode }: { points: SummaryBarPoint[]; mode: StepDetailMode }) {
+  const { ticks, topValue } = buildSummaryChartScale(points, mode);
+  const isMonthMode = mode === "month";
+
   return (
-    <View style={styles.legendChip}>
-      <View style={[styles.legendDot, { backgroundColor: color }]} />
-      <Text style={styles.legendText}>{label}</Text>
+    <View>
+      <View style={styles.chartShell}>
+        <View style={[styles.chartArea, { height: SUMMARY_CHART_HEIGHT }]}>
+          {ticks.slice(1).map((tick) => {
+            const bottom = SUMMARY_CHART_HEIGHT - (tick / topValue) * SUMMARY_CHART_HEIGHT;
+            return <View key={tick} style={[styles.chartGridLine, { bottom }]} />;
+          })}
+
+          <View style={[styles.summaryChartRow, isMonthMode ? styles.summaryChartRowMonth : null]}>
+            {points.map((point) => {
+              const height = point.value > 0 ? Math.max((point.value / topValue) * 100, 4) : 0;
+              return (
+                <View key={point.key} style={styles.summaryChartColumn}>
+                  <View style={[styles.summaryChartTrack, isMonthMode ? styles.summaryChartTrackMonth : null]}>
+                    <View
+                      style={[
+                        styles.summaryChartBar,
+                        isMonthMode ? styles.summaryChartBarMonth : null,
+                        point.selected ? styles.summaryChartBarSelected : null,
+                        { height: `${height}%` }
+                      ]}
+                    />
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+        <View style={[styles.chartYAxis, { height: SUMMARY_CHART_HEIGHT }]}>
+          {ticks.slice().reverse().map((tick) => (
+            <Text key={tick} style={styles.yAxisLabel}>
+              {tick.toLocaleString("en-US")}
+            </Text>
+          ))}
+        </View>
+      </View>
+
+      <View style={[styles.summaryChartXAxis, isMonthMode ? styles.summaryChartXAxisMonth : null]}>
+        {points.map((point) => (
+          <View key={`${point.key}-label`} style={styles.summaryChartXAxisSlot}>
+            <Text style={[styles.summaryChartLabel, point.selected ? styles.summaryChartLabelSelected : null]}>
+              {point.label}
+            </Text>
+          </View>
+        ))}
+      </View>
     </View>
   );
+}
+
+function buildEmptyChartBuckets(): StepHourBucket[] {
+  return Array.from({ length: 24 }, (_, index) => ({
+    hourStartIso: `empty-${index}`,
+    label: `${index}`.padStart(2, "0"),
+    steps: 0,
+    isCurrentHour: false
+  }));
 }
 
 function buildInitialStepDays(snapshot: DashboardSnapshot, healthProfile: HealthProfile | null): StepDetailDay[] {
-  const historyDays = snapshot.history.map((point) => ({
-    date: point.date,
-    totalSteps: Math.max(0, Math.round(point.steps)),
-    sourceLabel: point.date === snapshot.focusDate
-      ? snapshot.metrics.find((metric) => metric.id === "steps")?.source ?? point.stepsSource ?? "步数归档"
-      : point.stepsSource ?? "步数归档",
-    walkingKcal: estimateWalkingKcal(point.steps, healthProfile),
-    hourlyBuckets: [] as StepHourBucket[]
-  }));
+  const historyDays = snapshot.history.map((point) => {
+    const totalSteps = Math.max(0, Math.round(point.steps));
+    const distanceKm = estimateWalkingDistanceKm(totalSteps, healthProfile);
+    return {
+      date: point.date,
+      totalSteps,
+      sourceLabel: point.date === snapshot.focusDate
+        ? snapshot.metrics.find((metric) => metric.id === "steps")?.source ?? point.stepsSource ?? "步数归档"
+        : point.stepsSource ?? "步数归档",
+      walkingKcal: estimateWalkingKcal(totalSteps, healthProfile),
+      distanceKm,
+      hourlyBuckets: [] as StepHourBucket[]
+    };
+  });
   const focusMetricSteps = parseLeadingNumber(snapshot.metrics.find((metric) => metric.id === "steps")?.value) ?? 0;
 
   if (!historyDays.some((day) => day.date === snapshot.focusDate)) {
@@ -278,6 +554,7 @@ function buildInitialStepDays(snapshot: DashboardSnapshot, healthProfile: Health
       totalSteps: focusMetricSteps,
       sourceLabel: snapshot.metrics.find((metric) => metric.id === "steps")?.source ?? "步数归档",
       walkingKcal: estimateWalkingKcal(focusMetricSteps, healthProfile),
+      distanceKm: estimateWalkingDistanceKm(focusMetricSteps, healthProfile),
       hourlyBuckets: []
     });
   }
@@ -286,7 +563,8 @@ function buildInitialStepDays(snapshot: DashboardSnapshot, healthProfile: Health
     .sort((left, right) => left.date.localeCompare(right.date))
     .map((day) => ({
       ...day,
-      walkingKcal: estimateWalkingKcal(day.totalSteps, healthProfile)
+      walkingKcal: estimateWalkingKcal(day.totalSteps, healthProfile),
+      distanceKm: estimateWalkingDistanceKm(day.totalSteps, healthProfile)
     }));
 }
 
@@ -322,20 +600,126 @@ function mergeStepDetailDays(
       totalSteps,
       sourceLabel,
       walkingKcal: estimateWalkingKcal(totalSteps, healthProfile),
+      distanceKm: estimateWalkingDistanceKm(totalSteps, healthProfile),
       hourlyBuckets: hourlyByDate.get(date) ?? current?.hourlyBuckets ?? []
     };
   });
 }
 
-function getPeakHour(buckets: StepHourBucket[]) {
-  const peak = buckets.reduce<StepHourBucket | null>((best, bucket) => {
-    if (!best || bucket.steps > best.steps) {
-      return bucket;
-    }
-    return best;
-  }, null);
+function buildSummaryChartData(days: StepDetailDay[], activeDate: string, mode: StepDetailMode): SummaryBarPoint[] {
+  const daysByDate = new Map(days.map((day) => [day.date, day]));
+  const rangeDates = mode === "week" ? buildNaturalWeekDates(activeDate) : buildNaturalMonthDates(activeDate);
 
-  return peak && peak.steps > 0 ? peak : null;
+  return rangeDates.map((date) => {
+    const matched = daysByDate.get(date);
+    const dayOfMonth = Number(date.slice(8, 10));
+    const label = mode === "week"
+      ? `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`
+      : [1, 7, 14, 21, 28].includes(dayOfMonth) ? `${dayOfMonth}日` : "";
+
+    return {
+      key: date,
+      label,
+      value: matched?.totalSteps ?? 0,
+      selected: date === activeDate
+    };
+  });
+}
+
+function buildOverviewValues(days: StepDetailDay[], activeDate: string, mode: StepDetailMode): PeriodOverview {
+  const sorted = [...days].sort((left, right) => left.date.localeCompare(right.date));
+  const activeIndex = Math.max(0, sorted.findIndex((day) => day.date === activeDate));
+  const fallbackIndex = Math.max(sorted.length - 1, 0);
+  const anchorIndex = activeIndex >= 0 ? activeIndex : fallbackIndex;
+
+  if (mode === "day") {
+    const day = sorted[anchorIndex] ?? null;
+    return {
+      totalSteps: day?.totalSteps ?? 0,
+      distanceKm: day?.distanceKm ?? 0,
+      walkingKcal: day?.walkingKcal ?? 0,
+      helperText: day?.sourceLabel ?? "步数归档",
+      periodLabel: formatHeaderDate(day?.date ?? activeDate),
+      overviewTitle: "今日概览",
+      averageSteps: day?.totalSteps ?? 0,
+      averageDistanceKm: day?.distanceKm ?? 0
+    };
+  }
+
+  const daysByDate = new Map(sorted.map((day) => [day.date, day]));
+  const rangeDates = mode === "week" ? buildNaturalWeekDates(activeDate) : buildNaturalMonthDates(activeDate);
+  const elapsedDates = rangeDates.filter((date) => date <= activeDate);
+  const totalSteps = elapsedDates.reduce((sum, date) => sum + (daysByDate.get(date)?.totalSteps ?? 0), 0);
+  const distanceKm = elapsedDates.reduce((sum, date) => sum + (daysByDate.get(date)?.distanceKm ?? 0), 0);
+  const walkingKcal = elapsedDates.reduce((sum, date) => sum + (daysByDate.get(date)?.walkingKcal ?? 0), 0);
+  const effectiveDays = Math.max(elapsedDates.length, 1);
+  const periodLabel =
+    rangeDates.length > 0
+      ? mode === "week"
+        ? `${formatHeaderDate(rangeDates[0])}至${formatHeaderDate(rangeDates[rangeDates.length - 1])}`
+        : formatMonthLabel(activeDate)
+      : "--";
+
+  return {
+    totalSteps,
+    distanceKm,
+    walkingKcal,
+    helperText: mode === "week" ? "按本周已记录天数计算日均值" : "按本月已记录天数计算日均值",
+    periodLabel,
+    overviewTitle: mode === "week" ? "本周概览" : "本月概览",
+    averageSteps: Math.round(totalSteps / effectiveDays),
+    averageDistanceKm: distanceKm / effectiveDays
+  };
+}
+
+function buildHeaderDateLabel(activeDate: string, mode: StepDetailMode) {
+  if (mode === "day") {
+    return formatHeaderDate(activeDate);
+  }
+
+  if (mode === "week") {
+    const rangeDates = buildNaturalWeekDates(activeDate);
+    return `${formatHeaderDate(rangeDates[0])}至${formatHeaderDate(rangeDates[rangeDates.length - 1])}`;
+  }
+
+  return formatMonthLabel(activeDate);
+}
+
+function buildNaturalWeekDates(activeDate: string) {
+  const anchor = new Date(`${activeDate}T00:00:00`);
+  const weekday = (anchor.getDay() + 6) % 7;
+  anchor.setDate(anchor.getDate() - weekday);
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(anchor);
+    date.setDate(anchor.getDate() + index);
+    return toDateKey(date);
+  });
+}
+
+function buildNaturalMonthDates(activeDate: string) {
+  const anchor = new Date(`${activeDate}T00:00:00`);
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  return Array.from({ length: daysInMonth }, (_, index) => {
+    const date = new Date(year, month, index + 1);
+    return toDateKey(date);
+  });
+}
+
+function buildSummaryChartScale(points: SummaryBarPoint[], mode: StepDetailMode) {
+  const maxValue = Math.max(0, ...points.map((point) => point.value));
+  const step = mode === "week" ? 3000 : 4000;
+  const minimumTop = mode === "week" ? 15000 : 20000;
+  const topValue = Math.max(minimumTop, Math.ceil(maxValue / step) * step);
+  const ticks = Array.from({ length: Math.floor(topValue / step) + 1 }, (_, index) => index * step);
+
+  return {
+    topValue,
+    ticks
+  };
 }
 
 function estimateWalkingKcal(steps: number, healthProfile: HealthProfile | null) {
@@ -345,16 +729,39 @@ function estimateWalkingKcal(steps: number, healthProfile: HealthProfile | null)
   }
 
   const weightKg = healthProfile?.weightKg && healthProfile.weightKg > 25 ? healthProfile.weightKg : 65;
-  const strideMeters = healthProfile?.heightCm && healthProfile.heightCm > 100 ? healthProfile.heightCm * 0.415 / 100 : 0.7;
-  const distanceKm = safeSteps * strideMeters / 1000;
+  const distanceKm = estimateWalkingDistanceKm(safeSteps, healthProfile);
   return Math.max(0, Math.round(distanceKm * weightKg * 0.53));
 }
 
-function buildWalkingEstimateNote(steps: number, healthProfile: HealthProfile | null) {
-  const weightKg = healthProfile?.weightKg && healthProfile.weightKg > 25 ? Math.round(healthProfile.weightKg) : 65;
+function estimateWalkingDistanceKm(steps: number, healthProfile: HealthProfile | null) {
+  const safeSteps = Math.max(0, Math.round(steps));
+  if (safeSteps <= 0) {
+    return 0;
+  }
+
   const strideMeters = healthProfile?.heightCm && healthProfile.heightCm > 100 ? healthProfile.heightCm * 0.415 / 100 : 0.7;
-  const distanceKm = Math.max(0, steps) * strideMeters / 1000;
-  return `按当前档案估算，约步行 ${distanceKm.toFixed(1)} km，消耗基于 ${weightKg} kg 体重和步幅换算，仅作趋势参考。`;
+  return safeSteps * strideMeters / 1000;
+}
+
+function formatHeaderDate(date: string) {
+  const [year = "", month = "", day = ""] = date.split("-");
+  return `${year}年${Number(month)}月${Number(day)}日`;
+}
+
+function formatMonthLabel(date: string) {
+  const [year = "", month = ""] = date.split("-");
+  return `${year}年${Number(month)}月`;
+}
+
+function formatShortDate(date: string) {
+  return date.slice(5).replace("-", "/");
+}
+
+function toDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 const styles = StyleSheet.create({
@@ -365,14 +772,14 @@ const styles = StyleSheet.create({
   headerShell: {
     paddingHorizontal: layout.pageHorizontal,
     paddingTop: layout.pageTop,
-    gap: spacing.lg
+    gap: spacing.md
   },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between"
   },
-  backButton: {
+  iconButton: {
     width: 44,
     height: 44,
     borderRadius: radii.pill,
@@ -380,184 +787,431 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.surface,
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
+    ...shadows.card
   },
-  backButtonPressed: {
-    opacity: 0.9
+  iconButtonPressed: {
+    opacity: 0.86
+  },
+  headerCopy: {
+    flex: 1,
+    alignItems: "center",
+    gap: 2,
+    paddingHorizontal: spacing.md
   },
   headerTitle: {
-    color: colors.text,
-    fontSize: typography.bodyLarge,
-    fontWeight: "700"
-  },
-  headerSpacer: {
-    width: 44
-  },
-  heroBlock: {
-    gap: spacing.xs
-  },
-  heroEyebrow: {
-    color: colors.textSoft,
-    fontSize: typography.caption,
-    fontWeight: "700",
-    letterSpacing: 0.3
-  },
-  heroTitle: {
     color: colors.text,
     fontSize: typography.titleSmall,
     fontWeight: "800"
   },
-  heroDescription: {
-    color: colors.textMuted,
-    fontSize: typography.body,
-    lineHeight: 24
-  },
-  pageIndicatorRow: {
+  headerDateButton: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.xs,
-    paddingTop: spacing.xs
+    gap: spacing.xxs,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radii.md
   },
-  pageIndicatorDot: {
-    width: 8,
-    height: 8,
-    borderRadius: radii.pill,
-    backgroundColor: "rgba(0, 82, 204, 0.16)"
+  headerDateButtonPressed: {
+    backgroundColor: colors.primarySoft
   },
-  pageIndicatorDotActive: {
-    width: 22,
-    backgroundColor: colors.primary
+  headerDate: {
+    color: colors.textSoft,
+    fontSize: typography.body,
+    fontWeight: "500"
   },
-  pageContent: {
-    paddingHorizontal: layout.pageHorizontal,
-    paddingTop: spacing.lg,
-    gap: spacing.lg
+  headerRightSpacer: {
+    width: 44
+  },
+  segmentedControl: {
+    flexDirection: "row",
+    borderRadius: radii.lg,
+    borderWidth: borders.standard,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    padding: 4,
+    ...shadows.card
+  },
+  segmentItem: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radii.md,
+    paddingVertical: 10
+  },
+  segmentItemActive: {
+    backgroundColor: colors.primarySoft
+  },
+  segmentItemPressed: {
+    opacity: 0.9
+  },
+  segmentLabel: {
+    color: colors.textSoft,
+    fontSize: typography.bodyLarge,
+    fontWeight: "700"
+  },
+  segmentLabelActive: {
+    color: colors.primary
   },
   pageList: {
     flex: 1
   },
-  summaryGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
+  pageContent: {
+    paddingHorizontal: layout.pageHorizontal,
+    paddingTop: spacing.md,
+    paddingBottom: layout.pageBottom + spacing.md,
+    gap: spacing.md
   },
-  summaryCard: {
-    width: "48%",
-    minWidth: 148,
-    borderRadius: radii.md,
+  summaryPageContent: {
+    paddingHorizontal: layout.pageHorizontal,
+    paddingTop: spacing.md,
+    paddingBottom: layout.pageBottom + spacing.md,
+    gap: spacing.md
+  },
+  heroMetricsBlock: {
+    gap: spacing.xxs
+  },
+  heroStepLine: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: spacing.xs
+  },
+  heroStepValue: {
+    color: colors.text,
+    fontSize: 42,
+    lineHeight: 48,
+    fontWeight: "900",
+    letterSpacing: -0.8
+  },
+  heroStepUnit: {
+    color: colors.textSoft,
+    fontSize: typography.bodyLarge,
+    lineHeight: 28,
+    fontWeight: "700",
+    paddingBottom: 5
+  },
+  heroMetricDate: {
+    color: colors.textMuted,
+    fontSize: typography.label,
+    fontWeight: "500"
+  },
+  heroSourceText: {
+    color: colors.textSoft,
+    fontSize: typography.caption,
+    lineHeight: 18
+  },
+  chartCard: {
+    borderRadius: radii.lg,
     borderWidth: borders.standard,
     borderColor: colors.border,
     backgroundColor: colors.surface,
     padding: spacing.md,
-    gap: spacing.xs
+    gap: spacing.md,
+    ...shadows.card
   },
-  summaryLabel: {
-    color: colors.textSoft,
-    fontSize: typography.caption,
-    fontWeight: "700"
-  },
-  summaryHelper: {
-    color: colors.textMuted,
-    fontSize: typography.label,
-    lineHeight: 20
-  },
-  summaryNote: {
-    color: colors.textMuted,
-    fontSize: typography.label,
-    lineHeight: 22
-  },
-  dayChartBlock: {
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
     gap: spacing.md
   },
-  dayChartRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    gap: 4,
-    minHeight: 176
-  },
-  dayChartColumn: {
-    flex: 1,
-    alignItems: "center",
-    gap: spacing.xs
-  },
-  dayChartTrack: {
-    width: "100%",
-    maxWidth: 11,
-    height: 136,
-    borderRadius: radii.pill,
-    backgroundColor: "rgba(0, 82, 204, 0.10)",
-    overflow: "hidden",
-    justifyContent: "flex-end"
-  },
-  dayChartFill: {
-    width: "100%",
-    borderRadius: radii.pill
-  },
-  dayChartFillPast: {
-    backgroundColor: "rgba(0, 82, 204, 0.38)"
-  },
-  dayChartFillCurrent: {
-    backgroundColor: colors.primary
-  },
-  dayChartGhostFill: {
-    width: "100%",
-    borderRadius: radii.pill,
-    backgroundColor: "rgba(0, 82, 204, 0.12)"
-  },
-  dayChartLabel: {
+  sectionEyebrow: {
     color: colors.textSoft,
-    fontSize: 10,
-    fontWeight: "700"
-  },
-  dayChartLabelCurrent: {
-    color: colors.primary
-  },
-  dayChartGhostLabel: {
-    color: colors.textSoft,
-    fontSize: 10,
-    fontWeight: "700"
-  },
-  dayChartLegendRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
-  },
-  legendChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: radii.pill,
-    backgroundColor: "rgba(0, 82, 204, 0.05)"
-  },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: radii.pill
-  },
-  legendText: {
-    color: colors.textMuted,
     fontSize: typography.caption,
     fontWeight: "700"
   },
-  emptyChart: {
-    gap: spacing.md,
+  sectionTitle: {
+    color: colors.text,
+    fontSize: typography.bodyLarge,
+    fontWeight: "800",
+    paddingTop: 2
+  },
+  sectionHint: {
+    color: colors.textMuted,
+    fontSize: typography.caption,
+    paddingTop: 2
+  },
+  chartShell: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: spacing.sm
+  },
+  chartArea: {
+    flex: 1,
+    backgroundColor: colors.backgroundAccent,
     borderRadius: radii.md,
     borderWidth: borders.standard,
     borderColor: colors.border,
-    backgroundColor: "rgba(0, 82, 204, 0.03)",
-    padding: spacing.md
+    position: "relative",
+    overflow: "hidden"
   },
-  emptyChartTitle: {
+  chartGridLine: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    borderTopWidth: 1,
+    borderColor: "rgba(0, 82, 204, 0.08)"
+  },
+  chartColumnsRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs
+  },
+  chartColumn: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "flex-end",
+    height: "100%"
+  },
+  chartBar: {
+    width: 5,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primary
+  },
+  chartBarZero: {
+    backgroundColor: "rgba(0, 82, 204, 0.22)"
+  },
+  chartYAxis: {
+    width: 42,
+    justifyContent: "space-between",
+    paddingVertical: 2
+  },
+  yAxisLabel: {
+    color: colors.textSoft,
+    fontSize: 11,
+    textAlign: "left"
+  },
+  chartXAxis: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingTop: spacing.sm,
+    paddingHorizontal: 2
+  },
+  xAxisLabel: {
+    color: colors.textSoft,
+    fontSize: 11,
+    fontWeight: "500"
+  },
+  summaryChartRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs
+  },
+  summaryChartRowMonth: {
+    paddingHorizontal: spacing.xs
+  },
+  summaryChartColumn: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "flex-end",
+    height: "100%"
+  },
+  summaryChartTrack: {
+    width: "100%",
+    maxWidth: 20,
+    height: 144,
+    justifyContent: "flex-end",
+    alignItems: "center"
+  },
+  summaryChartTrackMonth: {
+    maxWidth: 10
+  },
+  summaryChartBar: {
+    width: 12,
+    borderRadius: radii.pill,
+    backgroundColor: "rgba(0, 82, 204, 0.34)"
+  },
+  summaryChartBarMonth: {
+    width: 6,
+    borderRadius: 3
+  },
+  summaryChartBarSelected: {
+    backgroundColor: colors.primary
+  },
+  summaryChartXAxis: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    paddingTop: spacing.sm,
+    paddingHorizontal: spacing.sm
+  },
+  summaryChartXAxisMonth: {
+    paddingHorizontal: spacing.xs
+  },
+  summaryChartXAxisSlot: {
+    flex: 1,
+    alignItems: "center"
+  },
+  summaryChartLabel: {
+    color: colors.textSoft,
+    fontSize: 10,
+    fontWeight: "600",
+    textAlign: "center"
+  },
+  summaryChartLabelSelected: {
+    color: colors.primary
+  },
+  overviewCard: {
+    borderRadius: radii.lg,
+    borderWidth: borders.standard,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
+    gap: spacing.md,
+    ...shadows.card
+  },
+  overviewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  overviewIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  overviewTitle: {
     color: colors.text,
     fontSize: typography.bodyLarge,
     fontWeight: "700"
   },
-  emptyChartDescription: {
+  overviewDivider: {
+    height: 1,
+    backgroundColor: colors.divider
+  },
+  overviewStatsRow: {
+    flexDirection: "row",
+    alignItems: "stretch"
+  },
+  overviewStatBlock: {
+    flex: 1,
+    gap: spacing.xxs
+  },
+  overviewStatsSeparator: {
+    width: 1,
+    backgroundColor: colors.divider,
+    marginHorizontal: spacing.md
+  },
+  overviewValueLine: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: spacing.xs
+  },
+  overviewValue: {
+    color: colors.text,
+    fontSize: 30,
+    lineHeight: 34,
+    fontWeight: "800",
+    letterSpacing: -0.4
+  },
+  overviewUnit: {
+    color: colors.textSoft,
+    fontSize: typography.label,
+    lineHeight: 20,
+    fontWeight: "600",
+    paddingBottom: 3
+  },
+  overviewLabel: {
     color: colors.textMuted,
+    fontSize: typography.label,
+    fontWeight: "500"
+  },
+  summaryMetaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm
+  },
+  metaPill: {
+    borderRadius: radii.md,
+    backgroundColor: colors.backgroundAccent,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    minWidth: "48%",
+    gap: 2
+  },
+  metaPillLabel: {
+    color: colors.textSoft,
+    fontSize: typography.caption,
+    fontWeight: "600"
+  },
+  metaPillValue: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: "600"
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(16, 35, 59, 0.18)",
+    justifyContent: "flex-end",
+    padding: spacing.lg
+  },
+  dateSheet: {
+    maxHeight: "72%",
+    borderRadius: radii.xl,
+    borderWidth: borders.standard,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
+    ...shadows.lift
+  },
+  dateSheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: spacing.sm
+  },
+  dateSheetTitle: {
+    color: colors.text,
+    fontSize: typography.bodyLarge,
+    fontWeight: "800"
+  },
+  dateSheetCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: radii.pill,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  dateSheetScroll: {
+    maxHeight: 420
+  },
+  dateOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm
+  },
+  dateOptionActive: {
+    backgroundColor: colors.primarySoft
+  },
+  dateOptionPressed: {
+    opacity: 0.88
+  },
+  dateOptionCopy: {
+    gap: 2
+  },
+  dateOptionTitle: {
+    color: colors.text,
     fontSize: typography.body,
-    lineHeight: 24
+    fontWeight: "700"
+  },
+  dateOptionTitleActive: {
+    color: colors.primary
+  },
+  dateOptionSubtitle: {
+    color: colors.textMuted,
+    fontSize: typography.caption
   }
 });

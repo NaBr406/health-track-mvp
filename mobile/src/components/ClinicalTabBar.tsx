@@ -40,7 +40,12 @@ export function ClinicalTabBar({ state, descriptors, navigation }: BottomTabBarP
     }).start();
   }, [animation, shouldHide]);
 
-  if (nestedRouteName === "AdjustmentDetail" || nestedRouteName === "ProfileDetail" || nestedRouteName === "ProfileSettings") {
+  if (
+    nestedRouteName === "AdjustmentDetail" ||
+    nestedRouteName === "StepDetail" ||
+    nestedRouteName === "ProfileDetail" ||
+    nestedRouteName === "ProfileSettings"
+  ) {
     return null;
   }
 

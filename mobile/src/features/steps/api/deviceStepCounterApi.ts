@@ -74,8 +74,8 @@ async function syncStepRecordsToServer(identity: DataIdentity, records: ServerSt
   });
 }
 
-export async function getMergedLocalStepRecords(session?: AuthSession | null, focusDate?: string) {
-  const deviceStepCounter = await readDeviceStepCounterRecords(session, { endDate: focusDate, days: 7 });
+export async function getMergedLocalStepRecords(session?: AuthSession | null, focusDate?: string, days = 7) {
+  const deviceStepCounter = await readDeviceStepCounterRecords(session, { endDate: focusDate, days });
   return mergeStepRecords(deviceStepCounter.state.status === "ready" ? deviceStepCounter.records : []);
 }
 
