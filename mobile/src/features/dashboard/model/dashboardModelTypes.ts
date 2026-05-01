@@ -7,8 +7,26 @@ export type AdviceCardMeta = {
   timestamp: string;
 };
 
-export type MetricCardMeta = {
+export type ActivitySummaryStatMeta = {
+  id: "calories" | "steps" | "exercise";
+  label: string;
+  iconName: keyof typeof Ionicons.glyphMap;
+  iconColor: string;
+  valueText: string;
+  targetText: string;
+};
+
+export type ActivitySummaryFooterMeta = {
+  label: string;
+  valueText: string;
+  iconName: keyof typeof Ionicons.glyphMap;
+  iconColor: string;
+};
+
+export type StandardMetricCardMeta = {
+  kind: "metric";
   id: string;
+  layout?: "half" | "full";
   label: string;
   descriptor: string;
   iconName: keyof typeof Ionicons.glyphMap;
@@ -20,6 +38,16 @@ export type MetricCardMeta = {
   inlineChart?: StepInlineChartMeta;
   chart?: GlucoseChartMeta;
 };
+
+export type ActivitySummaryCardMeta = {
+  kind: "activity_summary";
+  id: "activity-summary";
+  stats: ActivitySummaryStatMeta[];
+  footer: ActivitySummaryFooterMeta;
+  helperText?: string;
+};
+
+export type MetricCardMeta = StandardMetricCardMeta | ActivitySummaryCardMeta;
 
 export type StepInlineChartBarMeta = {
   label: string;

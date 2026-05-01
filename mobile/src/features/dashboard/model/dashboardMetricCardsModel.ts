@@ -10,9 +10,10 @@ const STEP_CHART_EMPTY_LABEL = "连接设备后显示近 8 小时步数";
 
 export function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfile: HealthProfile | null, now: Date): MetricCardMeta[] {
   const calorieTarget = resolveCalorieTarget(healthProfile);
-  const calorieValue = getMetricNumber(snapshot, "calories");
+  const intakeCalories = getMetricNumber(snapshot, "calories");
   const exerciseValue = getMetricNumber(snapshot, "exercise");
   const stepsValue = getMetricNumber(snapshot, "steps");
+  const burnedCalories = estimateExerciseBurnedCalories(stepsValue, exerciseValue, healthProfile);
   const stepsSource = findMetric(snapshot, "steps")?.source || "连接设备步数后自动同步";
   const glucoseChart = buildGlucoseChart(snapshot, now);
   const hasGlucoseData = glucoseChart.kind === "series";
@@ -21,40 +22,58 @@ export function buildMetricCards(snapshot: DashboardSnapshot | null, healthProfi
 
   return [
     {
+      kind: "activity_summary",
+      id: "activity-summary",
+      stats: [
+        {
+          id: "calories",
+          label: "热量",
+          iconName: "flame",
+          iconColor: "#FF7A1A",
+          valueText: formatSummaryInteger(burnedCalories),
+          targetText: `/ ${Math.round(calorieTarget)} 千卡`
+        },
+        {
+          id: "steps",
+          label: "步数",
+          iconName: "footsteps",
+          iconColor: "#F3B400",
+          valueText: formatSummaryInteger(stepsValue),
+          targetText: `/${DEFAULT_STEP_TARGET}步`
+        },
+        {
+          id: "exercise",
+          label: "活动",
+          iconName: "body",
+          iconColor: "#2ECC71",
+          valueText: formatSummaryInteger(exerciseValue),
+          targetText: `/${Math.round(DEFAULT_EXERCISE_TARGET / 7)}次`
+        }
+      ],
+      footer: {
+        label: "中高强度活动",
+        valueText: `${formatSummaryInteger(exerciseValue)} 分钟`,
+        iconName: "time",
+        iconColor: "#3DA5F5"
+      },
+      helperText: stepsSource
+    },
+    {
+      kind: "metric",
+      layout: "half",
       id: "calories",
-      label: "热量",
-      descriptor: "今日摄入",
+      label: "热量摄入",
+      descriptor: "今日饮食记录",
       iconName: "flame-outline",
-      valueText: formatMetricInteger(calorieValue),
+      valueText: formatSummaryInteger(intakeCalories),
       unitText: "kcal",
-      statusText: calorieValue >= calorieTarget ? "接近目标区间" : `距离目标 ${Math.max(Math.round(calorieTarget - calorieValue), 0)} kcal`,
+      statusText: intakeCalories >= calorieTarget ? "已接近今日摄入目标" : `距离目标 ${Math.max(Math.round(calorieTarget - intakeCalories), 0)} kcal`,
       helperText: `目标 ${Math.round(calorieTarget)} kcal`,
-      progress: clamp(calorieValue / calorieTarget)
+      progress: clamp(intakeCalories / calorieTarget)
     },
     {
-      id: "exercise",
-      label: "运动时长",
-      descriptor: "主动训练",
-      iconName: "fitness-outline",
-      valueText: formatMetricInteger(exerciseValue),
-      unitText: "min",
-      statusText: exerciseValue >= DEFAULT_EXERCISE_TARGET ? "已达到今日建议" : `还需 ${Math.max(Math.round(DEFAULT_EXERCISE_TARGET - exerciseValue), 0)} 分钟`,
-      helperText: `目标 ${DEFAULT_EXERCISE_TARGET} 分钟`,
-      progress: clamp(exerciseValue / DEFAULT_EXERCISE_TARGET)
-    },
-    {
-      id: "steps",
-      label: "步数",
-      descriptor: "全天活动",
-      iconName: "walk-outline",
-      valueText: formatMetricInteger(stepsValue),
-      unitText: "步",
-      statusText: stepsValue >= DEFAULT_STEP_TARGET ? "已达到今日建议" : `还需 ${Math.max(DEFAULT_STEP_TARGET - stepsValue, 0)} 步`,
-      helperText: stepsSource,
-      progress: clamp(stepsValue / DEFAULT_STEP_TARGET),
-      inlineChart: buildStepInlineChart(snapshot?.stepTrend8h)
-    },
-    {
+      kind: "metric",
+      layout: "full",
       id: "glucose",
       label: hasForecast ? "血糖 8h 趋势" : "血糖趋势",
       descriptor: hasGlucoseData
@@ -100,6 +119,18 @@ function resolveCalorieTarget(healthProfile: HealthProfile | null) {
   return value && value >= 1200 && value <= 2600 ? value : DEFAULT_CALORIE_TARGET;
 }
 
+function estimateExerciseBurnedCalories(steps: number, exerciseMinutes: number, healthProfile: HealthProfile | null) {
+  const safeSteps = Math.max(0, Math.round(steps));
+  const safeExerciseMinutes = Math.max(0, Math.round(exerciseMinutes));
+  const weightKg = healthProfile?.weightKg && healthProfile.weightKg > 25 ? healthProfile.weightKg : 65;
+  const strideMeters = healthProfile?.heightCm && healthProfile.heightCm > 100 ? healthProfile.heightCm * 0.415 / 100 : 0.7;
+  const walkingDistanceKm = safeSteps * strideMeters / 1000;
+  const walkingBurn = walkingDistanceKm * weightKg * 0.53;
+  const trainingBurn = safeExerciseMinutes * weightKg * 0.085;
+
+  return Math.max(0, Math.round(walkingBurn + trainingBurn));
+}
+
 function findMetric(snapshot: DashboardSnapshot | null, id: string): DashboardMetric | undefined {
   return snapshot?.metrics.find((metric) => metric.id === id);
 }
@@ -110,6 +141,10 @@ function getMetricNumber(snapshot: DashboardSnapshot | null, id: string) {
 
 function formatMetricInteger(value: number) {
   return value > 0 ? `${Math.round(value)}` : "--";
+}
+
+function formatSummaryInteger(value: number) {
+  return `${Math.max(0, Math.round(value))}`;
 }
 
 function clamp(value: number, min = 0, max = 1) {

@@ -163,15 +163,19 @@ export function DashboardScreen({
           <Text style={styles.sectionTitle}>关键指标</Text>
         </View>
 
-        <View style={styles.metricGrid}>
-          {metricCards.map((metric) => (
-            <DashboardMetricCard
-              key={metric.id}
-              metric={metric}
-              onPress={metric.id === "steps" && snapshot ? () => onOpenStepDetail(snapshot) : undefined}
-            />
-          ))}
-        </View>
+          <View style={styles.metricGrid}>
+            {metricCards.map((metric) => (
+              <DashboardMetricCard
+                key={metric.id}
+                metric={metric}
+                onPress={
+                  snapshot && (metric.id === "steps" || metric.id === "activity-summary")
+                    ? () => onOpenStepDetail(snapshot)
+                    : undefined
+                }
+              />
+            ))}
+          </View>
 
         {!session ? <DashboardGuestPanel onRequestSignIn={onRequestSignIn} /> : null}
       </ScrollView>

@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { borders, colors, radii, shadows, spacing, typography } from "../../../theme/tokens";
 import type { MetricCardMeta } from "../model/dashboardScreenModel";
+import type { StepInlineChartBarMeta, StepInlineChartMeta } from "../model/dashboardModelTypes";
 import { GlucoseLineChart } from "./GlucoseLineChart";
 
 type DashboardMetricCardProps = {
@@ -11,10 +12,18 @@ type DashboardMetricCardProps = {
 };
 
 export function DashboardMetricCard({ metric, onPress }: DashboardMetricCardProps) {
+  if (metric.kind === "activity_summary") {
+    return <ActivitySummaryCard metric={metric} onPress={onPress} />;
+  }
+
   return metric.chart ? <GlucoseMetricCard metric={metric} /> : <RingMetricCard metric={metric} onPress={onPress} />;
 }
 
 function RingMetricCard({ metric, onPress }: DashboardMetricCardProps) {
+  if (metric.kind !== "metric") {
+    return null;
+  }
+
   const content = (
     <>
       <MetricCardHeader metric={metric} showChevron={Boolean(onPress)} />
@@ -39,6 +48,7 @@ function RingMetricCard({ metric, onPress }: DashboardMetricCardProps) {
         onPress={onPress}
         style={({ pressed }) => [
           styles.metricCard,
+          metric.layout === "full" ? styles.metricCardFull : null,
           metric.inlineChart ? styles.metricCardWithInlineChart : null,
           pressed ? styles.metricCardPressed : null
         ]}
@@ -48,11 +58,67 @@ function RingMetricCard({ metric, onPress }: DashboardMetricCardProps) {
     );
   }
 
-  return <View style={[styles.metricCard, metric.inlineChart ? styles.metricCardWithInlineChart : null]}>{content}</View>;
+  return <View style={[styles.metricCard, metric.layout === "full" ? styles.metricCardFull : null, metric.inlineChart ? styles.metricCardWithInlineChart : null]}>{content}</View>;
+}
+
+function ActivitySummaryCard({ metric, onPress }: DashboardMetricCardProps) {
+  if (metric.kind !== "activity_summary") {
+    return null;
+  }
+
+  const content = (
+    <>
+      <View style={styles.activitySummaryStatsRow}>
+        {metric.stats.map((stat, index) => (
+          <View key={stat.id} style={styles.activitySummaryStatBlock}>
+            <View style={styles.activitySummaryLabelRow}>
+              <Ionicons color={stat.iconColor} name={stat.iconName} size={22} />
+              <Text style={styles.activitySummaryLabel}>{stat.label}</Text>
+              <Ionicons color="rgba(255, 255, 255, 0.22)" name="chevron-forward" size={18} />
+            </View>
+            <Text style={styles.activitySummaryValue}>{stat.valueText}</Text>
+            <Text style={styles.activitySummaryTarget}>{stat.targetText}</Text>
+            {index < metric.stats.length - 1 ? <View style={styles.activitySummarySpacer} /> : null}
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.activitySummaryDivider} />
+
+      <View style={styles.activitySummaryFooterRow}>
+        <View style={styles.activitySummaryFooterLeading}>
+          <View style={styles.activitySummaryFooterIconWrap}>
+            <Ionicons color={metric.footer.iconColor} name={metric.footer.iconName} size={18} />
+          </View>
+          <Text style={styles.activitySummaryFooterText}>
+            {metric.footer.label} {metric.footer.valueText}
+          </Text>
+        </View>
+        <Ionicons color="rgba(255, 255, 255, 0.22)" name="chevron-forward" size={22} />
+      </View>
+
+      {metric.helperText ? <Text style={styles.activitySummaryHelper}>{metric.helperText}</Text> : null}
+    </>
+  );
+
+  if (onPress) {
+    return (
+      <Pressable
+        accessibilityHint="打开步数详情"
+        accessibilityRole="button"
+        onPress={onPress}
+        style={({ pressed }) => [styles.activitySummaryCard, pressed ? styles.metricCardPressed : null]}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+
+  return <View style={styles.activitySummaryCard}>{content}</View>;
 }
 
 function GlucoseMetricCard({ metric }: DashboardMetricCardProps) {
-  if (!metric.chart) {
+  if (metric.kind !== "metric" || !metric.chart) {
     return null;
   }
 
@@ -83,6 +149,10 @@ function GlucoseMetricCard({ metric }: DashboardMetricCardProps) {
 }
 
 function MetricCardHeader({ metric, showChevron = false }: { metric: MetricCardMeta; showChevron?: boolean }) {
+  if (metric.kind !== "metric") {
+    return null;
+  }
+
   return (
     <View style={styles.metricHeader}>
       <View style={styles.metricHeaderLeading}>
@@ -104,6 +174,10 @@ function MetricCardHeader({ metric, showChevron = false }: { metric: MetricCardM
 }
 
 function MetricValueBlock({ metric }: DashboardMetricCardProps) {
+  if (metric.kind !== "metric") {
+    return null;
+  }
+
   return (
     <View style={styles.metricValueBlock}>
       <View style={styles.metricValueLine}>
@@ -118,7 +192,7 @@ function MetricValueBlock({ metric }: DashboardMetricCardProps) {
   );
 }
 
-function StepInlineChart({ chart }: { chart: NonNullable<MetricCardMeta["inlineChart"]> }) {
+function StepInlineChart({ chart }: { chart: StepInlineChartMeta }) {
   if (chart.kind === "empty") {
     return (
       <View style={styles.inlineChartBlock}>
@@ -154,7 +228,7 @@ function StepInlineChart({ chart }: { chart: NonNullable<MetricCardMeta["inlineC
         <Text style={styles.inlineChartMeta}>小时步数</Text>
       </View>
       <View style={styles.inlineChartRow}>
-        {chart.bars.map((bar) => {
+        {chart.bars.map((bar: StepInlineChartBarMeta) => {
           const height = chart.maxSteps > 0 ? (bar.steps / chart.maxSteps) * 100 : 0;
           return (
             <View key={`${bar.label}-${bar.isCurrentHour ? "current" : "past"}`} style={styles.inlineChartColumn}>
@@ -237,6 +311,11 @@ const styles = StyleSheet.create({
   },
   metricCardWithInlineChart: {
     minHeight: 224
+  },
+  metricCardFull: {
+    width: "100%",
+    flexBasis: "100%",
+    minWidth: "100%"
   },
   metricHeader: {
     flexDirection: "row",
@@ -511,5 +590,92 @@ const styles = StyleSheet.create({
     fontSize: 17,
     lineHeight: 26,
     fontWeight: "600"
+  },
+  activitySummaryCard: {
+    width: "100%",
+    borderRadius: 28,
+    borderWidth: borders.standard,
+    borderColor: colors.borderStrong,
+    backgroundColor: "#F3F8FF",
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.lg,
+    gap: spacing.lg,
+    ...shadows.card
+  },
+  activitySummaryStatsRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    justifyContent: "space-between",
+    gap: spacing.lg
+  },
+  activitySummaryStatBlock: {
+    flex: 1,
+    gap: spacing.xs
+  },
+  activitySummaryLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs
+  },
+  activitySummaryLabel: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: "800"
+  },
+  activitySummaryValue: {
+    color: colors.text,
+    fontSize: 40,
+    lineHeight: 44,
+    fontWeight: "900",
+    letterSpacing: -0.8,
+    includeFontPadding: false
+  },
+  activitySummaryTarget: {
+    color: colors.textSoft,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "700"
+  },
+  activitySummarySpacer: {
+    width: "100%"
+  },
+  activitySummaryDivider: {
+    height: 1,
+    backgroundColor: colors.divider
+  },
+  activitySummaryFooterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md
+  },
+  activitySummaryFooterLeading: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md
+  },
+  activitySummaryFooterIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  activitySummaryFooterText: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: "800"
+  },
+  activitySummaryHelper: {
+    color: colors.textSoft,
+    fontSize: 12,
+    lineHeight: 18
   }
 });
