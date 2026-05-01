@@ -440,21 +440,21 @@ function DatePickerSheet({
 
 function StepDayBarChart({ buckets }: { buckets: StepHourBucket[] }) {
   const chartBuckets = buckets.length > 0 ? buckets : buildEmptyChartBuckets();
-  const maxSteps = Math.max(1, ...chartBuckets.map((bucket) => bucket.steps));
+  const { ticks, topValue } = buildDayChartScale(chartBuckets);
   const hasBars = buckets.length > 0;
 
   return (
     <View>
       <View style={styles.chartShell}>
         <View style={[styles.chartArea, { height: DAY_CHART_HEIGHT }]}>
-          {CHART_Y_TICKS.slice(1).map((tick) => {
-            const bottom = DAY_CHART_HEIGHT - (tick / 2000) * DAY_CHART_HEIGHT;
+          {ticks.slice(1).map((tick) => {
+            const bottom = DAY_CHART_HEIGHT - (tick / topValue) * DAY_CHART_HEIGHT;
             return <View key={tick} style={[styles.chartGridLine, { bottom }]} />;
           })}
 
           <View style={styles.chartColumnsRow}>
             {chartBuckets.map((bucket, index) => {
-              const height = bucket.steps > 0 ? Math.max((bucket.steps / maxSteps) * 100, 2.5) : 0;
+              const height = bucket.steps > 0 ? Math.max((bucket.steps / topValue) * 100, 2.5) : 0;
               return (
                 <View key={bucket.hourStartIso || `${bucket.label}-${index}`} style={styles.chartColumn}>
                   {hasBars ? (
@@ -473,7 +473,7 @@ function StepDayBarChart({ buckets }: { buckets: StepHourBucket[] }) {
         </View>
 
         <View style={[styles.chartYAxis, { height: DAY_CHART_HEIGHT }]}>
-          {CHART_Y_TICKS.slice().reverse().map((tick) => (
+          {ticks.slice().reverse().map((tick) => (
             <Text key={tick} style={styles.yAxisLabel}>
               {tick.toLocaleString("en-US")}
             </Text>
@@ -741,6 +741,35 @@ function buildSummaryChartScale(points: SummaryBarPoint[], mode: StepDetailMode)
   const minimumTop = mode === "week" ? 15000 : 20000;
   const topValue = Math.max(minimumTop, Math.ceil(maxValue / step) * step);
   const ticks = Array.from({ length: Math.floor(topValue / step) + 1 }, (_, index) => index * step);
+
+  return {
+    topValue,
+    ticks
+  };
+}
+
+function buildDayChartScale(buckets: StepHourBucket[]) {
+  const maxValue = Math.max(0, ...buckets.map((bucket) => bucket.steps));
+
+  if (maxValue <= 200) {
+    return { topValue: 200, ticks: [0, 50, 100, 150, 200] };
+  }
+
+  if (maxValue <= 400) {
+    return { topValue: 400, ticks: [0, 100, 200, 300, 400] };
+  }
+
+  if (maxValue <= 800) {
+    return { topValue: 800, ticks: [0, 200, 400, 600, 800] };
+  }
+
+  if (maxValue <= 1200) {
+    return { topValue: 1200, ticks: [0, 300, 600, 900, 1200] };
+  }
+
+  const step = 500;
+  const topValue = Math.max(2000, Math.ceil(maxValue / step) * step);
+  const ticks = Array.from({ length: 5 }, (_, index) => Math.round((topValue / 4) * index));
 
   return {
     topValue,

@@ -279,17 +279,7 @@ class DeviceStepCounterModule(
     val dayStartEpochMs = date.atStartOfDay(zoneId).toInstant().toEpochMilli()
     val dayEndEpochMs = date.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
     val daySnapshots = store.getSnapshotsBetween(dayStartEpochMs, dayEndEpochMs)
-    val sequence = buildSnapshotSequence(store, dayStartEpochMs, dayEndEpochMs, additionalSnapshot)
-
-    val steps = if (sequence.size < 2) {
-      0
-    } else {
-      sequence
-        .zipWithNext()
-        .sumOf { (previous, current) -> resolveStepIncrement(previous, current) }
-        .coerceIn(0L, Int.MAX_VALUE.toLong())
-        .toInt()
-    }
+    val steps = computeStepsBetween(store, dayStartEpochMs, dayEndEpochMs, additionalSnapshot)
 
     val sampledAtIso = when {
       additionalSnapshot != null && epochMsToLocalDate(additionalSnapshot.recordedAtEpochMs, zoneId) == date ->
@@ -319,36 +309,13 @@ class DeviceStepCounterModule(
     val hourStarts = List(bucketCount) { index ->
       currentHourStart.minusHours((bucketCount - 1 - index).toLong())
     }
-    val windowStartEpochMs = hourStarts.first().toInstant().toEpochMilli()
-    val windowEndEpochMs = currentHourStart.plusHours(1).toInstant().toEpochMilli()
-    val sequence = buildSnapshotSequence(store, windowStartEpochMs, windowEndEpochMs, additionalSnapshot)
-
-    if (sequence.size < 2) {
-      return emptyList()
-    }
-
-    val hourIndexByStartEpochMs = hourStarts
-      .mapIndexed { index, hourStart -> hourStart.toInstant().toEpochMilli() to index }
-      .toMap()
-    val bucketSteps = IntArray(bucketCount)
-
-    sequence.zipWithNext().forEach { (previous, current) ->
-      val increment = resolveStepIncrement(previous, current)
-        .coerceIn(0L, Int.MAX_VALUE.toLong())
-        .toInt()
-      val bucketStartEpochMs = toHourStart(current.recordedAtEpochMs, zoneId).toInstant().toEpochMilli()
-      val bucketIndex = hourIndexByStartEpochMs[bucketStartEpochMs] ?: return@forEach
-
-      bucketSteps[bucketIndex] = (bucketSteps[bucketIndex].toLong() + increment)
-        .coerceIn(0L, Int.MAX_VALUE.toLong())
-        .toInt()
-    }
-
     return hourStarts.mapIndexed { index, hourStart ->
+      val hourStartEpochMs = hourStart.toInstant().toEpochMilli()
+      val hourEndEpochMs = hourStart.plusHours(1).toInstant().toEpochMilli()
       DeviceStepHourlyRecord(
         hourStartIso = hourStart.toInstant().toString(),
         label = hourStart.hour.toString().padStart(2, '0'),
-        steps = bucketSteps[index],
+        steps = computeStepsBetween(store, hourStartEpochMs, hourEndEpochMs, additionalSnapshot),
         isCurrentHour = index == bucketCount - 1
       )
     }
@@ -363,41 +330,18 @@ class DeviceStepCounterModule(
     val hourStarts = List(24) { index ->
       date.atStartOfDay(zoneId).plusHours(index.toLong())
     }
-    val windowStartEpochMs = hourStarts.first().toInstant().toEpochMilli()
-    val windowEndEpochMs = date.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
-    val sequence = buildSnapshotSequence(store, windowStartEpochMs, windowEndEpochMs, additionalSnapshot)
-
-    if (sequence.size < 2) {
-      return emptyList()
-    }
-
     val currentHourStartEpochMs = toHourStart(additionalSnapshot?.recordedAtEpochMs ?: System.currentTimeMillis(), zoneId)
       .toInstant()
       .toEpochMilli()
     val isToday = date == LocalDate.now(zoneId)
-    val hourIndexByStartEpochMs = hourStarts
-      .mapIndexed { index, hourStart -> hourStart.toInstant().toEpochMilli() to index }
-      .toMap()
-    val bucketSteps = IntArray(hourStarts.size)
-
-    sequence.zipWithNext().forEach { (previous, current) ->
-      val increment = resolveStepIncrement(previous, current)
-        .coerceIn(0L, Int.MAX_VALUE.toLong())
-        .toInt()
-      val bucketStartEpochMs = toHourStart(current.recordedAtEpochMs, zoneId).toInstant().toEpochMilli()
-      val bucketIndex = hourIndexByStartEpochMs[bucketStartEpochMs] ?: return@forEach
-
-      bucketSteps[bucketIndex] = (bucketSteps[bucketIndex].toLong() + increment)
-        .coerceIn(0L, Int.MAX_VALUE.toLong())
-        .toInt()
-    }
 
     return hourStarts.mapIndexed { index, hourStart ->
       val hourStartEpochMs = hourStart.toInstant().toEpochMilli()
+      val hourEndEpochMs = hourStart.plusHours(1).toInstant().toEpochMilli()
       DeviceStepHourlyRecord(
         hourStartIso = hourStart.toInstant().toString(),
         label = hourStart.hour.toString().padStart(2, '0'),
-        steps = bucketSteps[index],
+        steps = computeStepsBetween(store, hourStartEpochMs, hourEndEpochMs, additionalSnapshot),
         isCurrentHour = isToday && hourStartEpochMs == currentHourStartEpochMs
       )
     }
@@ -411,6 +355,10 @@ class DeviceStepCounterModule(
   ): List<DeviceStepSnapshot> {
     val baseline = store.getLatestSnapshotBefore(startEpochMsInclusive)
     val windowSnapshots = store.getSnapshotsBetween(startEpochMsInclusive, endEpochMsExclusive)
+    val trailingSnapshot = when {
+      additionalSnapshot != null && additionalSnapshot.recordedAtEpochMs >= endEpochMsExclusive -> additionalSnapshot
+      else -> store.getEarliestSnapshotAtOrAfter(endEpochMsExclusive)
+    }
 
     return buildList {
       if (baseline != null) {
@@ -428,7 +376,42 @@ class DeviceStepCounterModule(
           add(additionalSnapshot)
         }
       }
+      if (trailingSnapshot != null) {
+        val lastSnapshot = lastOrNull()
+        val isDuplicate = lastSnapshot != null &&
+          lastSnapshot.recordedAtEpochMs == trailingSnapshot.recordedAtEpochMs &&
+          lastSnapshot.elapsedRealtimeMs == trailingSnapshot.elapsedRealtimeMs &&
+          lastSnapshot.stepsSinceBoot == trailingSnapshot.stepsSinceBoot
+
+        if (!isDuplicate) {
+          add(trailingSnapshot)
+        }
+      }
     }
+  }
+
+  private fun computeStepsBetween(
+    store: DeviceStepSnapshotStore,
+    startEpochMsInclusive: Long,
+    endEpochMsExclusive: Long,
+    additionalSnapshot: DeviceStepSnapshot? = null
+  ): Int {
+    if (endEpochMsExclusive <= startEpochMsInclusive) {
+      return 0
+    }
+
+    val sequence = buildSnapshotSequence(store, startEpochMsInclusive, endEpochMsExclusive, additionalSnapshot)
+    if (sequence.size < 2) {
+      return 0
+    }
+
+    return sequence
+      .zipWithNext()
+      .sumOf { (previous, current) ->
+        resolveWindowStepIncrement(previous, current, startEpochMsInclusive, endEpochMsExclusive)
+      }
+      .coerceIn(0L, Int.MAX_VALUE.toLong())
+      .toInt()
   }
 
   private suspend fun ensureLiveUpdatesStarted() {
@@ -564,6 +547,36 @@ class DeviceStepCounterModule(
     } else {
       current.stepsSinceBoot
     }
+  }
+
+  private fun resolveWindowStepIncrement(
+    previous: DeviceStepSnapshot,
+    current: DeviceStepSnapshot,
+    windowStartEpochMs: Long,
+    windowEndEpochMsExclusive: Long
+  ): Long {
+    val totalIncrement = resolveStepIncrement(previous, current)
+    if (totalIncrement <= 0) {
+      return 0
+    }
+
+    val intervalStart = previous.recordedAtEpochMs.coerceAtMost(current.recordedAtEpochMs)
+    val intervalEnd = current.recordedAtEpochMs.coerceAtLeast(previous.recordedAtEpochMs)
+    val totalDurationMs = intervalEnd - intervalStart
+    if (totalDurationMs <= 0L) {
+      return totalIncrement
+    }
+
+    val overlapStart = maxOf(intervalStart, windowStartEpochMs)
+    val overlapEnd = minOf(intervalEnd, windowEndEpochMsExclusive)
+    val overlapDurationMs = overlapEnd - overlapStart
+    if (overlapDurationMs <= 0L) {
+      return 0
+    }
+
+    return ((totalIncrement.toDouble() * overlapDurationMs.toDouble()) / totalDurationMs.toDouble())
+      .toLong()
+      .coerceAtLeast(0L)
   }
 
   private fun toHourStart(epochMs: Long, zoneId: ZoneId): ZonedDateTime {
