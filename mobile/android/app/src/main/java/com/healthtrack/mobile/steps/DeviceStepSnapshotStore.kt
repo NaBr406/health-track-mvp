@@ -97,6 +97,25 @@ internal class DeviceStepSnapshotStore(context: Context) : SQLiteOpenHelper(
     }
   }
 
+  fun getEarliestSnapshotAtOrAfter(recordedAtEpochMs: Long): DeviceStepSnapshot? {
+    return readableDatabase.query(
+      TABLE_NAME,
+      PROJECTION,
+      "$COLUMN_RECORDED_AT_EPOCH_MS >= ?",
+      arrayOf(recordedAtEpochMs.toString()),
+      null,
+      null,
+      "$COLUMN_RECORDED_AT_EPOCH_MS ASC",
+      "1"
+    ).use { cursor ->
+      if (!cursor.moveToFirst()) {
+        null
+      } else {
+        cursor.toSnapshot()
+      }
+    }
+  }
+
   fun pruneOlderThan(recordedAtEpochMs: Long) {
     writableDatabase.delete(
       TABLE_NAME,
