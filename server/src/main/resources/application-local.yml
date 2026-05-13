@@ -17,6 +17,15 @@ spring:
   h2:
     console:
       enabled: true
+springdoc:
+  swagger-ui:
+    enabled: true
+  api-docs:
+    enabled: true
 app:
+  jwt:
+    secret: local-dev-only-secret-not-for-production-use-min32chars
+  cors:
+    allowed-origins: "*"
   seed:
     enabled: true

@@ -4,6 +4,7 @@ import com.healthtrack.mvp.dto.ProfileDtos.ProfileRequest;
 import com.healthtrack.mvp.dto.ProfileDtos.ProfileResponse;
 import com.healthtrack.mvp.service.ProfileService;
 import com.healthtrack.mvp.util.SecurityUtils;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -27,7 +28,7 @@ public class ProfileController {
     }
 
     @PutMapping
-    public ProfileResponse updateProfile(@RequestBody ProfileRequest request) {
+    public ProfileResponse updateProfile(@Valid @RequestBody ProfileRequest request) {
         return profileService.updateProfile(SecurityUtils.currentUserId(), request);
     }
 }

@@ -1,6 +1,6 @@
 ﻿import { invalidateStoredSession, loadToken } from "../../lib/auth";
 
-const RELEASE_API_BASE_URL = "http://150.158.117.174";
+const RELEASE_API_BASE_URL = "https://150.158.117.174";
 const ENV_API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
 const API_BASE_URL = (ENV_API_BASE_URL || RELEASE_API_BASE_URL).replace(/\/+$/, "");
 

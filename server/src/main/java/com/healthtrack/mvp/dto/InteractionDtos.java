@@ -1,6 +1,7 @@
 package com.healthtrack.mvp.dto;
 
 import com.healthtrack.mvp.dto.DashboardDtos.DashboardSnapshotResponse;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -29,10 +30,10 @@ public final class InteractionDtos {
     }
 
     public record InteractionMessageRequest(
-            String message,
-            String inputMode,
+            @Size(max = 2000) String message,
+            @Size(max = 20) String inputMode,
             LocalDate focusDate,
-            String timeZone
+            @Size(max = 60) String timeZone
     ) {
     }
 

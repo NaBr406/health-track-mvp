@@ -14,7 +14,8 @@
           }
         }
       ],
-      "expo-health-connect"
+      "expo-health-connect",
+      "expo-secure-store"
     ],
     "android": {
       "package": "com.healthtrack.mobile"

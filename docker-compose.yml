@@ -44,7 +44,7 @@ services:
       MYSQL_DB: ${MYSQL_DB:-health_track_mvp}
       MYSQL_USER: ${MYSQL_USER:-health_user}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-health_password}
-      JWT_SECRET: ${JWT_SECRET:-please-change-this-to-a-long-random-string-with-at-least-32-characters}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET environment variable is required}
       DIFY_BASE_URL: ${DIFY_BASE_URL:-}
       DIFY_API_KEY: ${DIFY_API_KEY:-}
       DIFY_WORKFLOW_ID: ${DIFY_WORKFLOW_ID:-}

@@ -2,6 +2,7 @@ package com.healthtrack.mvp.config;
 
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -18,14 +19,6 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
-/**
- * Spring Security 核心配置。
- *
- * 当前项目采用无状态 JWT 模式，因此这里会统一处理：
- * 1. 哪些接口匿名放行。
- * 2. JWT 过滤器的接入顺序。
- * 3. 跨域策略和密码编码器。
- */
 @Configuration
 @EnableMethodSecurity
 @RequiredArgsConstructor
@@ -33,11 +26,9 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
-    /**
-     * 定义主安全过滤链。
-     *
-     * 认证相关接口、Swagger 文档和预检请求直接放行，其余请求默认都要求认证。
-     */
+    @Value("${app.cors.allowed-origins:}")
+    private String allowedOrigins;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
@@ -49,7 +40,8 @@ public class SecurityConfig {
                                 "/api/auth/**",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
-                                "/swagger-ui.html"
+                                "/swagger-ui.html",
+                                "/error"
                         ).permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .anyRequest().authenticated())
@@ -63,17 +55,18 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    /**
-     * 定义全局跨域配置。
-     *
-     * MVP 阶段放得相对宽松，目的是降低移动端、本地调试和文档联调的接入摩擦。
-     */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOriginPatterns(List.of("*"));
+
+        if (allowedOrigins == null || allowedOrigins.isBlank()) {
+            configuration.setAllowedOriginPatterns(List.of("http://localhost:*", "http://127.0.0.1:*"));
+        } else {
+            configuration.setAllowedOriginPatterns(List.of(allowedOrigins.split(",")));
+        }
+
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("*"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

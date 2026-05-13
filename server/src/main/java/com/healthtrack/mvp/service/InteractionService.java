@@ -78,6 +78,8 @@ public class InteractionService {
     private final AdviceService adviceService;
     private final DifyRecordExtractorClient difyRecordExtractorClient;
 
+    private static final int MAX_THREAD_CACHE_SIZE = 500;
+
     private final Map<String, CopyOnWriteArrayList<ChatMessageResponse>> threadStore = new ConcurrentHashMap<>();
     private final Map<String, InteractionDayState> dayStateStore = new ConcurrentHashMap<>();
     private final Map<String, String> feedbackStore = new ConcurrentHashMap<>();
@@ -254,6 +256,10 @@ public class InteractionService {
     }
 
     private CopyOnWriteArrayList<ChatMessageResponse> ensureThread(Long userId, LocalDate focusDate) {
+        if (threadStore.size() > MAX_THREAD_CACHE_SIZE) {
+            threadStore.keySet().stream().findFirst().ifPresent(threadStore::remove);
+            dayStateStore.keySet().stream().findFirst().ifPresent(dayStateStore::remove);
+        }
         return threadStore.computeIfAbsent(
                 dayKey(userId, focusDate),
                 ignored -> {

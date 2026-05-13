@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx expo *)",
+      "Bash(npx tsc *)",
+      "Bash(./mvnw compile *)",
+      "Bash(./mvnw spring-boot:run -Dspring-boot.run.profiles=local)"
+    ]
+  }
+}

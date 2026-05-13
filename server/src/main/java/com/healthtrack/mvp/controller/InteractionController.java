@@ -5,6 +5,7 @@ import com.healthtrack.mvp.dto.InteractionDtos.InteractionMessageRequest;
 import com.healthtrack.mvp.dto.InteractionDtos.InteractionMessageResponse;
 import com.healthtrack.mvp.service.InteractionService;
 import com.healthtrack.mvp.util.SecurityUtils;
+import jakarta.validation.Valid;
 import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -33,7 +34,7 @@ public class InteractionController {
     }
 
     @PostMapping("/messages")
-    public InteractionMessageResponse sendMessage(@RequestBody InteractionMessageRequest request) {
+    public InteractionMessageResponse sendMessage(@Valid @RequestBody InteractionMessageRequest request) {
         return interactionService.sendMessage(SecurityUtils.currentUserId(), request);
     }
 }
