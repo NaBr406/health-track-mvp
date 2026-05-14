@@ -82,6 +82,7 @@ mobile/src/
 - TypeScript
 - React Navigation
 - AsyncStorage
+- `expo-secure-store`
 - `expo-build-properties`
 - `expo-health-connect`
 - `expo-image-picker`
@@ -141,7 +142,7 @@ mobile/src/
 - `/api/records/steps`
 - `/api/records/steps/sync`
 - `/api/records/care`
-- Swagger UI: `http://localhost:8080/swagger-ui.html`
+- Swagger UI: `http://localhost:8080/swagger-ui.html`（仅 `local` profile 开启，生产默认关闭）
 - OpenAPI JSON: `http://localhost:8080/v3/api-docs`
 
 ## 步数同步说明
@@ -204,7 +205,7 @@ Set-Content mobile\.env "EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:8080"
 - Android 模拟器：`http://10.0.2.2:8080`
 - Android 真机：`http://<你的局域网 IP>:8080`
 
-> 如果不显式设置 `EXPO_PUBLIC_API_BASE_URL`，移动端会回退到代码里写死的远端地址 `http://150.158.117.174`，本地联调和 release 打包时都不建议依赖这个默认值。
+> 如果不显式设置 `EXPO_PUBLIC_API_BASE_URL`，移动端会回退到代码里写死的远端地址 `https://150.158.117.174`，本地联调和 release 打包时都不建议依赖这个默认值。
 
 #### 3. 一键启动
 
@@ -287,6 +288,7 @@ npm run start:dev-client
 
 ```powershell
 Copy-Item .env.example .env
+# 必须在 .env 中设置 JWT_SECRET，否则服务无法启动
 docker compose up --build
 ```
 
@@ -300,6 +302,8 @@ docker compose up --build
 
 - 邮箱：`demo@healthtrack.local`
 - 密码：`Demo123456!`
+
+> 注意：`seed.enabled` 在 `local` profile 下默认开启，其他环境默认关闭。如需在 Docker 部署时灌入演示数据，需设置环境变量 `APP_SEED_ENABLED=true`。
 
 这个逻辑位于 [server/src/main/java/com/healthtrack/mvp/config/SeedDataInitializer.java](server/src/main/java/com/healthtrack/mvp/config/SeedDataInitializer.java)。
 
@@ -318,7 +322,7 @@ docker compose up --build
 
 鉴权：
 
-- `JWT_SECRET`
+- `JWT_SECRET`（**必填**，未设置时应用拒绝启动；建议使用 32 字节以上的随机 Base64 字符串）
 
 Dify 每日建议：
 
@@ -340,7 +344,7 @@ Dify 记录抽取：
 
 - `REDIS_HOST`
 - `REDIS_PORT`
-- `SPRING_PROFILES_ACTIVE`
+- `SPRING_PROFILES_ACTIVE`（`local` = H2 + 无 Redis；不设置或 `prod` = MySQL + Redis）
 
 ### 移动端 `mobile/.env`
 
@@ -375,12 +379,12 @@ mobile/android/app/build/outputs/apk/release/app-release.apk
 ### 更小的 arm64 Release APK
 
 ```powershell
-Set-Content mobile\.env "EXPO_PUBLIC_API_BASE_URL=http://<你的服务器地址>:8080"
+Set-Content mobile\.env "EXPO_PUBLIC_API_BASE_URL=https://<你的服务器地址>"
 cd mobile\android
 .\gradlew.bat assembleRelease '-PreactNativeArchitectures=arm64-v8a' '-Pandroid.enableMinifyInReleaseBuilds=true' '-Pandroid.enableShrinkResourcesInReleaseBuilds=true'
 ```
 
-> Release 包会在构建时固化 `mobile/.env` 中的 `EXPO_PUBLIC_API_BASE_URL`。如果这里还是模拟器地址 `http://10.0.2.2:8080`，真机安装后会连不到你的服务器；真机请改成局域网 IP 或公网服务器地址。
+> Release 包会在构建时固化 `mobile/.env` 中的 `EXPO_PUBLIC_API_BASE_URL`。如果这里还是模拟器地址 `http://10.0.2.2:8080`，真机安装后会连不到你的服务器；真机请改成公网 HTTPS 地址。
 
 > 当前 `release` 仍使用 debug keystore 签名，只适合内部验证；如果要正式分发，需要先修改 [mobile/android/app/build.gradle](mobile/android/app/build.gradle) 中的签名配置。
 
